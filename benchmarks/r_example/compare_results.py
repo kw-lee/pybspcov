@@ -77,9 +77,17 @@ def _comparison(
     return result
 
 
-def _keyed_rows(path: Path) -> dict[tuple[int, int], dict[str, str]]:
+def _keyed_rows(
+    path: Path, expected_implementation: str
+) -> dict[tuple[int, int], dict[str, str]]:
     keyed: dict[tuple[int, int], dict[str, str]] = {}
-    for row in _read_csv(path):
+    for row_number, row in enumerate(_read_csv(path), start=2):
+        if row.get("implementation") != expected_implementation:
+            raise ValueError(
+                f"{path} row {row_number} has implementation "
+                f"{row.get('implementation')!r}; expected implementation "
+                f"{expected_implementation!r}"
+            )
         try:
             key = (int(row["row"]), int(row["column"]))
         except (KeyError, TypeError, ValueError) as error:
@@ -90,8 +98,35 @@ def _keyed_rows(path: Path) -> dict[tuple[int, int], dict[str, str]]:
     return keyed
 
 
-def _timing_categories(path: Path) -> dict[str, float | None]:
-    row = _read_csv(path)[0]
+def _validate_square_grid(
+    path: Path, rows: dict[tuple[int, int], dict[str, str]]
+) -> None:
+    if len(rows) == 1:
+        raise ValueError(f"{path} must contain at least a 2 by 2 covariance grid")
+    dimension = max(max(row, column) for row, column in rows)
+    expected_keys = {
+        (row, column)
+        for row in range(1, dimension + 1)
+        for column in range(1, dimension + 1)
+    }
+    if rows.keys() != expected_keys:
+        raise ValueError(
+            f"{path} must contain a complete contiguous square covariance grid"
+        )
+
+
+def _timing_categories(
+    path: Path, expected_implementation: str
+) -> dict[str, float | None]:
+    rows = _read_csv(path)
+    if len(rows) != 1:
+        raise ValueError(f"{path} must contain exactly one timing row")
+    row = rows[0]
+    if row.get("implementation") != expected_implementation:
+        raise ValueError(
+            f"{path} has implementation {row.get('implementation')!r}; "
+            f"expected implementation {expected_implementation!r}"
+        )
     timings: dict[str, float | None] = {}
     for field in row:
         if field == "implementation":
@@ -126,8 +161,10 @@ def compare_files(
     pybspcov_timing_path: Path,
 ) -> dict[str, Any]:
     """Return a JSON-compatible statistical and timing comparison."""
-    r_rows = _keyed_rows(r_summary_path)
-    pybspcov_rows = _keyed_rows(pybspcov_summary_path)
+    r_rows = _keyed_rows(r_summary_path, "bspcov")
+    pybspcov_rows = _keyed_rows(pybspcov_summary_path, "pybspcov")
+    _validate_square_grid(r_summary_path, r_rows)
+    _validate_square_grid(pybspcov_summary_path, pybspcov_rows)
     if r_rows.keys() != pybspcov_rows.keys():
         raise ValueError("R and pybspcov summaries contain different covariance keys")
     _validate_summary_rows(r_summary_path, r_rows)
@@ -166,8 +203,8 @@ def compare_files(
         "posterior_comparisons": posterior_comparisons,
         "rmse_comparison": rmse_comparison,
         "timing_categories": {
-            "bspcov": _timing_categories(r_timing_path),
-            "pybspcov": _timing_categories(pybspcov_timing_path),
+            "bspcov": _timing_categories(r_timing_path, "bspcov"),
+            "pybspcov": _timing_categories(pybspcov_timing_path, "pybspcov"),
         },
     }
 

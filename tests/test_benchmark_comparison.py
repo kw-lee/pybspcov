@@ -8,6 +8,7 @@ import pytest
 BENCHMARK_DIR = Path(__file__).parents[1] / "benchmarks" / "r_example"
 sys.path.insert(0, str(BENCHMARK_DIR))
 
+import run_pybspcov as benchmark_runner
 from compare_results import compare_files
 from run_pybspcov import (
     detect_cpu_model,
@@ -74,6 +75,42 @@ def _summary_rows(implementation: str) -> list[dict[str, object]]:
             "rmse": 0.10,
             "rmse_mcse": 0.02,
         },
+        {
+            "implementation": implementation,
+            "row": 2,
+            "column": 1,
+            "posterior_mean": -0.20,
+            "posterior_mean_mcse": 0.01,
+            "posterior_sd": 0.25,
+            "posterior_sd_mcse": 0.01,
+            "q025": -0.70,
+            "q025_mcse": 0.01,
+            "q50": -0.18,
+            "q50_mcse": 0.01,
+            "q975": 0.25,
+            "q975_mcse": 0.01,
+            "truth": 0.0,
+            "rmse": 0.10,
+            "rmse_mcse": 0.02,
+        },
+        {
+            "implementation": implementation,
+            "row": 2,
+            "column": 2,
+            "posterior_mean": 1.00,
+            "posterior_mean_mcse": 0.01,
+            "posterior_sd": 0.40,
+            "posterior_sd_mcse": 0.01,
+            "q025": 0.30,
+            "q025_mcse": 0.01,
+            "q50": 0.95,
+            "q50_mcse": 0.01,
+            "q975": 1.80,
+            "q975_mcse": 0.01,
+            "truth": 1.0,
+            "rmse": 0.10,
+            "rmse_mcse": 0.02,
+        },
     ]
 
 
@@ -137,6 +174,99 @@ def _compare(paths: tuple[Path, Path, Path, Path]) -> dict[str, object]:
         r_timing_path=r_timing,
         pybspcov_timing_path=pybspcov_timing,
     )
+
+
+def test_same_summary_file_is_rejected(tmp_path: Path) -> None:
+    paths = _write_fixture(tmp_path, _summary_rows("pybspcov"))
+
+    with pytest.raises(ValueError, match="expected implementation 'bspcov'"):
+        compare_files(
+            r_summary_path=paths[1],
+            pybspcov_summary_path=paths[1],
+            r_timing_path=paths[2],
+            pybspcov_timing_path=paths[3],
+        )
+
+
+def test_wrong_timing_implementation_is_rejected(tmp_path: Path) -> None:
+    paths = _write_fixture(tmp_path, _summary_rows("pybspcov"))
+    _write_csv(
+        paths[2],
+        ("implementation", "sampler_seconds", "end_to_end_seconds"),
+        [
+            {
+                "implementation": "pybspcov",
+                "sampler_seconds": 10.0,
+                "end_to_end_seconds": 11.0,
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="expected implementation 'bspcov'"):
+        _compare(paths)
+
+
+def test_multiple_timing_rows_are_rejected(tmp_path: Path) -> None:
+    paths = _write_fixture(tmp_path, _summary_rows("pybspcov"))
+    _write_csv(
+        paths[2],
+        ("implementation", "sampler_seconds", "end_to_end_seconds"),
+        [
+            {
+                "implementation": "bspcov",
+                "sampler_seconds": 10.0,
+                "end_to_end_seconds": 11.0,
+            },
+            {
+                "implementation": "bspcov",
+                "sampler_seconds": 12.0,
+                "end_to_end_seconds": 13.0,
+            },
+        ],
+    )
+
+    with pytest.raises(ValueError, match="exactly one timing row"):
+        _compare(paths)
+
+
+def test_empty_summary_has_a_clear_error(tmp_path: Path) -> None:
+    paths = _write_fixture(tmp_path, _summary_rows("pybspcov"))
+    _write_csv(paths[0], SUMMARY_FIELDS, [])
+
+    with pytest.raises(ValueError, match="contains no data rows"):
+        _compare(paths)
+
+
+def test_single_covariance_row_is_rejected(tmp_path: Path) -> None:
+    paths = _write_fixture(tmp_path, _summary_rows("pybspcov"))
+    _write_csv(paths[0], SUMMARY_FIELDS, _summary_rows("bspcov")[:1])
+
+    with pytest.raises(ValueError, match="at least a 2 by 2"):
+        _compare(paths)
+
+
+def test_incomplete_square_grid_is_rejected(tmp_path: Path) -> None:
+    pybspcov_rows = _summary_rows("pybspcov")
+    pybspcov_rows.pop()
+
+    with pytest.raises(ValueError, match="complete contiguous square"):
+        _compare(_write_fixture(tmp_path, pybspcov_rows))
+
+
+def test_noncontiguous_square_grid_is_rejected(tmp_path: Path) -> None:
+    pybspcov_rows = _summary_rows("pybspcov")
+    pybspcov_rows[-1]["row"] = 3
+
+    with pytest.raises(ValueError, match="complete contiguous square"):
+        _compare(_write_fixture(tmp_path, pybspcov_rows))
+
+
+def test_duplicate_covariance_key_is_rejected(tmp_path: Path) -> None:
+    pybspcov_rows = _summary_rows("pybspcov")
+    pybspcov_rows.append(pybspcov_rows[0].copy())
+
+    with pytest.raises(ValueError, match="duplicate covariance key"):
+        _compare(_write_fixture(tmp_path, pybspcov_rows))
 
 
 def test_in_tolerance_posterior_summaries_pass(tmp_path: Path) -> None:
@@ -311,6 +441,30 @@ def test_chain_validation_rejects_nonfinite_draws() -> None:
 
 def test_cpu_model_detection_returns_a_nonempty_provenance_value() -> None:
     assert detect_cpu_model().strip()
+
+
+def test_missing_optional_distribution_version_is_explicit() -> None:
+    assert (
+        benchmark_runner.installed_distribution_version(
+            "definitely-not-an-installed-distribution"
+        )
+        == "<not-installed>"
+    )
+
+
+def test_nvidia_driver_detection_is_portable_without_nvidia_smi(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(benchmark_runner.shutil, "which", lambda _: None)
+
+    assert benchmark_runner.detect_nvidia_driver_version() == "<unavailable>"
+
+
+def test_git_provenance_records_revision_and_dirty_state() -> None:
+    revision, dirty = benchmark_runner.git_provenance(Path(__file__).parents[1])
+
+    assert len(revision) == 40
+    assert dirty in {"true", "false"}
 
 
 @pytest.mark.parametrize(("device", "platform_name"), [("cpu", "cpu"), ("gpu", "cuda")])

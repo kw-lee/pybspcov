@@ -1,5 +1,4 @@
 import csv
-import json
 import os
 import shutil
 import subprocess
@@ -78,13 +77,43 @@ def test_pybspcov_cpu_cli_writes_all_result_schemas(tmp_path: Path) -> None:
         newline="", encoding="utf-8"
     ) as file:
         metadata_rows = list(csv.DictReader(file))
-    assert {row["name"] for row in metadata_rows} >= {
+    metadata = {row["name"]: row["value"] for row in metadata_rows}
+    assert metadata.keys() >= {
         "package_version",
         "dtype",
         "device_kind",
+        "device_platform_version",
+        "jax_cuda12_plugin_version",
+        "jax_cuda12_pjrt_version",
+        "nvidia_cuda_runtime_cu12_version",
+        "nvidia_driver_version",
+        "JAX_PLATFORMS",
+        "JAX_ENABLE_X64",
+        "XLA_FLAGS",
+        "XLA_PYTHON_CLIENT_PREALLOCATE",
+        "XLA_PYTHON_CLIENT_MEM_FRACTION",
+        "XLA_PYTHON_CLIENT_ALLOCATOR",
+        "CUDA_VISIBLE_DEVICES",
+        "CUDA_DEVICE_ORDER",
+        "git_revision",
+        "git_dirty",
         "n_batches",
         "steady_state_timing_scope",
     }
+    assert metadata["JAX_PLATFORMS"] == "cpu"
+    assert metadata["JAX_ENABLE_X64"] == "1"
+    assert metadata["git_dirty"] in {"true", "false", "<unavailable>"}
+    assert all(
+        metadata[name]
+        for name in (
+            "device_platform_version",
+            "jax_cuda12_plugin_version",
+            "jax_cuda12_pjrt_version",
+            "nvidia_cuda_runtime_cu12_version",
+            "nvidia_driver_version",
+            "git_revision",
+        )
+    )
     with (tmp_path / "pybspcov_timing.csv").open(newline="", encoding="utf-8") as file:
         timing_reader = csv.DictReader(file)
         timing_rows = list(timing_reader)
@@ -114,7 +143,7 @@ def _write_csv(path: Path, fieldnames: tuple[str, ...], row: dict[str, object]) 
         writer.writerow(row)
 
 
-def test_comparison_cli_writes_json_verdict(tmp_path: Path) -> None:
+def test_comparison_cli_rejects_one_row_summary(tmp_path: Path) -> None:
     summary_row: dict[str, object] = {
         "implementation": "placeholder",
         "row": 1,
@@ -187,11 +216,9 @@ def test_comparison_cli_writes_json_verdict(tmp_path: Path) -> None:
         check=False,
     )
 
-    assert result.returncode == 0, result.stderr
-    payload = json.loads(output.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 1
-    assert payload["statistical_verdict"] == "pass"
-    assert payload["timing_categories"]["pybspcov"]["steady_state_seconds"] == 0.5
+    assert result.returncode != 0
+    assert "at least a 2 by 2" in result.stderr
+    assert not output.exists()
 
 
 @pytest.mark.skipif(shutil.which("Rscript") is None, reason="Rscript is unavailable")

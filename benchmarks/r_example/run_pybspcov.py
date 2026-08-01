@@ -7,9 +7,13 @@ import argparse
 import csv
 import os
 import platform
+import shutil
 import statistics
+import subprocess
 import sys
 import time
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as distribution_version
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +33,23 @@ THREAD_ENVIRONMENT_VARIABLES = (
     "MKL_NUM_THREADS",
     "VECLIB_MAXIMUM_THREADS",
     "BLIS_NUM_THREADS",
+)
+
+
+ACCELERATOR_ENVIRONMENT_VARIABLES = (
+    "JAX_PLATFORMS",
+    "JAX_ENABLE_X64",
+    "XLA_FLAGS",
+    "XLA_PYTHON_CLIENT_PREALLOCATE",
+    "XLA_PYTHON_CLIENT_MEM_FRACTION",
+    "XLA_PYTHON_CLIENT_ALLOCATOR",
+    "CUDA_VISIBLE_DEVICES",
+    "CUDA_DEVICE_ORDER",
+)
+OPTIONAL_ACCELERATOR_DISTRIBUTIONS = (
+    ("jax_cuda12_plugin_version", "jax-cuda12-plugin"),
+    ("jax_cuda12_pjrt_version", "jax-cuda12-pjrt"),
+    ("nvidia_cuda_runtime_cu12_version", "nvidia-cuda-runtime-cu12"),
 )
 
 
@@ -135,6 +156,74 @@ def detect_physical_cores() -> str:
     return "unavailable"
 
 
+def installed_distribution_version(distribution_name: str) -> str:
+    """Return an installed distribution version or an explicit sentinel."""
+    try:
+        return distribution_version(distribution_name)
+    except PackageNotFoundError:
+        return "<not-installed>"
+
+
+def _run_provenance_command(
+    command: list[str],
+) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def detect_nvidia_driver_version() -> str:
+    """Return NVIDIA driver versions without requiring NVIDIA tooling."""
+    executable = shutil.which("nvidia-smi")
+    if executable is None:
+        return "<unavailable>"
+    result = _run_provenance_command(
+        [
+            executable,
+            "--query-gpu=driver_version",
+            "--format=csv,noheader",
+        ]
+    )
+    if result is None or result.returncode != 0:
+        return "<unavailable>"
+    versions = sorted(
+        {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    )
+    return ",".join(versions) if versions else "<unavailable>"
+
+
+def git_provenance(project_root: Path) -> tuple[str, str]:
+    """Return the repository revision and whether its worktree is dirty."""
+    revision_result = _run_provenance_command(
+        ["git", "-C", str(project_root), "rev-parse", "HEAD"]
+    )
+    if revision_result is None or revision_result.returncode != 0:
+        return "<unavailable>", "<unavailable>"
+    revision = revision_result.stdout.strip()
+    if not revision:
+        return "<unavailable>", "<unavailable>"
+    status_result = _run_provenance_command(
+        [
+            "git",
+            "-C",
+            str(project_root),
+            "status",
+            "--porcelain",
+            "--untracked-files=normal",
+        ]
+    )
+    if status_result is None or status_result.returncode != 0:
+        return revision, "<unavailable>"
+    return revision, str(bool(status_result.stdout.strip())).lower()
+
+
 def jax_platform_name(device: str) -> str:
     """Translate the user-facing device alias to a registered JAX platform."""
     return "cuda" if device == "gpu" else device
@@ -215,12 +304,23 @@ def _metadata(
     thread_environment = [
         (name, os.environ.get(name, "<unset>")) for name in THREAD_ENVIRONMENT_VARIABLES
     ]
+    accelerator_environment = [
+        (name, os.environ.get(name, "<unset>"))
+        for name in ACCELERATOR_ENVIRONMENT_VARIABLES
+    ]
+    accelerator_versions = [
+        (metadata_name, installed_distribution_version(distribution_name))
+        for metadata_name, distribution_name in OPTIONAL_ACCELERATOR_DISTRIBUTIONS
+    ]
+    project_root = Path(__file__).resolve().parents[2]
+    git_revision, git_dirty = git_provenance(project_root)
     metadata = [
         ("implementation", "pybspcov"),
         ("package", "pybspcov"),
         ("package_version", pybspcov_version),
         ("jax_version", jax.__version__),
         ("jaxlib_version", jax.lib.__version__),
+        *accelerator_versions,
         ("python_version", platform.python_version()),
         ("platform", platform.platform()),
         ("dtype", "float64"),
@@ -228,10 +328,18 @@ def _metadata(
         ("device_id", str(device.id)),
         ("device_kind", device.device_kind),
         ("jax_backend", device.platform),
+        (
+            "device_platform_version",
+            str(getattr(device.client, "platform_version", "<unavailable>")),
+        ),
+        ("nvidia_driver_version", detect_nvidia_driver_version()),
         ("cpu_model", detect_cpu_model()),
         ("logical_cores", str(os.cpu_count() or "unavailable")),
         ("physical_cores", detect_physical_cores()),
+        ("git_revision", git_revision),
+        ("git_dirty", git_dirty),
         *thread_environment,
+        *accelerator_environment,
         ("n", str(n)),
         ("p", str(p)),
         ("burnin", str(burnin)),

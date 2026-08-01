@@ -113,8 +113,9 @@ The metadata CSVs have `name,value` columns. They record package/runtime
 versions, platform and device, float64 precision, CPU/core and thread details,
 fixture dimensions, chain settings and seeds, batch-MCSE settings, and exact
 timing-scope descriptions. R additionally records BLAS, LAPACK, and session
-information; JAX records JAX/JAXLIB versions, backend, device ID, and device
-kind.
+information; JAX records JAX/JAXLIB and installed CUDA distribution versions,
+backend, device ID and kind, platform version, NVIDIA driver version, selected
+JAX/XLA/CUDA environment variables, and the Git revision and dirty state.
 
 `r_timing.csv` contains:
 
