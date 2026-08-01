@@ -27,6 +27,37 @@ class BMSweepResult(NamedTuple):
     accepted: Array
 
 
+class BMColumnParameters(NamedTuple):
+    """Deterministic conditional parameters for one BM column update."""
+
+    conditional_precision: Array
+    conditional_scatter: Array
+    quadratic: Array
+    gamma_lambda: Array
+    gamma_chi: Array
+    gamma_psi: Array
+    beta_precision: Array
+    beta_mean: Array
+
+
+class BMChainResult(NamedTuple):
+    """Retained BM draws, sweep statuses, and the final chain state."""
+
+    final_state: BMState
+    covariance: Array
+    phi: Array
+    accepted: Array
+
+
+class _BMColumnMoments(NamedTuple):
+    conditional_precision: Array
+    conditional_scatter: Array
+    quadratic: Array
+    gamma_lambda: Array
+    gamma_chi: Array
+    gamma_psi: Array
+
+
 def initialize_bm_state(covariance: Array, tau1sq: Array) -> BMState:
     """Construct the R-compatible initial BM chain state."""
     ones = jnp.ones_like(covariance)
@@ -37,6 +68,101 @@ def initialize_bm_state(covariance: Array, tau1sq: Array) -> BMState:
         phi=ones,
         psi=ones,
         tau=tau,
+    )
+
+
+def _bm_column_moments(
+    covariance: Array,
+    precision: Array,
+    scatter: Array,
+    column: Array,
+    other_indices: Array,
+    n_observations: Array,
+    diagonal_rate: Array,
+) -> _BMColumnMoments:
+    precision_block = precision[jnp.ix_(other_indices, other_indices)]
+    precision_cross = precision[other_indices, column]
+    conditional_precision = (
+        precision_block
+        - jnp.outer(precision_cross, precision_cross) / precision[column, column]
+    )
+    scatter_block = scatter[jnp.ix_(other_indices, other_indices)]
+    scatter_cross = scatter[other_indices, column]
+    conditional_scatter = conditional_precision @ scatter_cross
+    quadratic = conditional_precision @ scatter_block @ conditional_precision
+    beta = covariance[other_indices, column]
+    gamma_chi = (
+        beta @ quadratic @ beta
+        - 2.0 * beta @ conditional_scatter
+        + scatter[column, column]
+    )
+    return _BMColumnMoments(
+        conditional_precision=conditional_precision,
+        conditional_scatter=conditional_scatter,
+        quadratic=quadratic,
+        gamma_lambda=1.0 - n_observations / 2.0,
+        gamma_chi=gamma_chi,
+        gamma_psi=diagonal_rate,
+    )
+
+
+def _bm_beta_parameters(
+    moments: _BMColumnMoments,
+    tau: Array,
+    other_indices: Array,
+    column: Array,
+    diagonal_rate: Array,
+    gamma: Array,
+) -> tuple[Array, Array]:
+    beta_precision = (
+        moments.quadratic / gamma
+        + jnp.diag(1.0 / tau[other_indices, column])
+        + diagonal_rate * moments.conditional_precision
+    )
+    beta_precision = 0.5 * (beta_precision + beta_precision.T)
+    beta_mean = jnp.linalg.solve(beta_precision, moments.conditional_scatter) / gamma
+    return beta_precision, beta_mean
+
+
+def bm_column_parameters(
+    *,
+    covariance: Array,
+    precision: Array,
+    scatter: Array,
+    tau: Array,
+    column: Array,
+    other_indices: Array,
+    n_observations: Array,
+    diagonal_rate: Array,
+    gamma: Array,
+) -> BMColumnParameters:
+    """Return the R-compatible conditionals for one blocked BM update."""
+    moments = _bm_column_moments(
+        covariance,
+        precision,
+        scatter,
+        column,
+        other_indices,
+        n_observations,
+        diagonal_rate,
+    )
+    beta_precision, beta_mean = _bm_beta_parameters(
+        moments,
+        tau,
+        other_indices,
+        column,
+        diagonal_rate,
+        gamma,
+    )
+    return BMColumnParameters(
+        conditional_precision=moments.conditional_precision,
+        conditional_scatter=moments.conditional_scatter,
+        quadratic=moments.quadratic,
+        gamma_lambda=moments.gamma_lambda,
+        gamma_chi=moments.gamma_chi,
+        gamma_psi=moments.gamma_psi,
+        beta_precision=beta_precision,
+        beta_mean=beta_mean,
     )
 
 
@@ -65,41 +191,37 @@ def bm_sweep(
             current_key, 5
         )
         indices = other_indices[column]
-        precision_block = current.precision[jnp.ix_(indices, indices)]
-        precision_cross = current.precision[indices, column]
-        conditional_precision = (
-            precision_block
-            - jnp.outer(precision_cross, precision_cross)
-            / current.precision[column, column]
-        )
-        scatter_block = scatter[jnp.ix_(indices, indices)]
-        scatter_cross = scatter[indices, column]
-        conditional_scatter = conditional_precision @ scatter_cross
-        quadratic = conditional_precision @ scatter_block @ conditional_precision
-        old_beta = current.covariance[indices, column]
-        chi = (
-            old_beta @ quadratic @ old_beta
-            - 2.0 * old_beta @ conditional_scatter
-            + scatter[column, column]
+        moments = _bm_column_moments(
+            current.covariance,
+            current.precision,
+            scatter,
+            jnp.asarray(column),
+            indices,
+            n_observations,
+            diagonal_rate,
         )
         gamma_draw = sample_gig(
             gamma_key,
-            1.0 - n_observations / 2.0,
-            jnp.maximum(chi, jnp.asarray(1e-12, dtype=dtype)),
-            diagonal_rate,
+            moments.gamma_lambda,
+            jnp.maximum(
+                moments.gamma_chi,
+                jnp.asarray(1e-12, dtype=dtype),
+            ),
+            moments.gamma_psi,
         )
         gamma = jnp.where(
             gamma_draw.accepted,
             gamma_draw.value,
             jnp.asarray(1.0, dtype=dtype),
         )
-        beta_precision = (
-            quadratic / gamma
-            + jnp.diag(1.0 / current.tau[indices, column])
-            + diagonal_rate * conditional_precision
+        beta_precision, beta_mean = _bm_beta_parameters(
+            moments,
+            current.tau,
+            indices,
+            jnp.asarray(column),
+            diagonal_rate,
+            gamma,
         )
-        beta_precision = 0.5 * (beta_precision + beta_precision.T)
-        beta_mean = jnp.linalg.solve(beta_precision, conditional_scatter) / gamma
         beta_cholesky = jnp.linalg.cholesky(beta_precision)
         beta_noise = jnp.linalg.solve(
             beta_cholesky.T,
@@ -158,3 +280,63 @@ def bm_sweep(
         (state, key, jnp.asarray(True)),
     )
     return BMSweepResult(state=updated, accepted=accepted)
+
+
+def sample_bm_chain(
+    key: Array,
+    state: BMState,
+    scatter: Array,
+    other_indices: Array,
+    n_observations: Array,
+    a: Array,
+    b: Array,
+    diagonal_rate: Array,
+    tau1sq: Array,
+    *,
+    burnin: int,
+    n_samples: int,
+) -> BMChainResult:
+    """Run sequential BM sweeps and retain draws after burn-in.
+
+    ``burnin`` and ``n_samples`` determine output shapes. When wrapping this
+    function in :func:`jax.jit`, declare both with
+    ``static_argnames=("burnin", "n_samples")``.
+    """
+    if burnin < 0:
+        raise ValueError("burnin must be non-negative")
+    if n_samples <= 0:
+        raise ValueError("n_samples must be positive")
+    sweep_keys = jax.random.split(key, burnin + n_samples)
+
+    def sweep(
+        current: BMState,
+        sweep_key: Array,
+    ) -> tuple[BMState, tuple[Array, Array, Array]]:
+        result = bm_sweep(
+            sweep_key,
+            current,
+            scatter,
+            other_indices,
+            n_observations,
+            a,
+            b,
+            diagonal_rate,
+            tau1sq,
+        )
+        return result.state, (
+            result.state.covariance,
+            result.state.phi,
+            result.accepted,
+        )
+
+    final_state, (covariance, phi, accepted) = jax.lax.scan(
+        sweep,
+        state,
+        sweep_keys,
+    )
+    return BMChainResult(
+        final_state=final_state,
+        covariance=covariance[burnin:],
+        phi=phi[burnin:],
+        accepted=accepted,
+    )
