@@ -37,6 +37,28 @@ posterior_mean = model.covariance_
 This example documents the approved target API and is not executable in the
 bootstrap commit.
 
+## Development installation
+
+The repository scaffold can be installed for CPU development. Estimator
+implementations are not yet available.
+
+```bash
+git clone https://github.com/kw-lee/pybspcov.git
+cd pybspcov
+uv sync --all-groups
+uv run python -c "import pybspcov; print(pybspcov.__version__)"
+```
+
+For NVIDIA GPU support, use the accelerator-specific JAX installation selected
+from the [official JAX installation guide](https://docs.jax.dev/en/latest/installation.html)
+and verify it with `uv run python -c "import jax; print(jax.devices())"`.
+
+## Development
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Branch,
+worktree, parallel ownership, and protected-`main` rules are defined in the
+[development workflow](docs/development/workflow.md).
+
 ## Design
 
 The approved architecture, numerical contract, validation strategy, benchmark

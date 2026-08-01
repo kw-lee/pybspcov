@@ -1,0 +1,53 @@
+cff-version: "1.2.0"
+message: "If you use pybspcov, please cite this software and the method papers."
+title: pybspcov
+type: software
+version: 0.1.0.dev0
+date-released: "2026-08-01"
+license: GPL-2.0-or-later
+repository-code: "https://github.com/kw-lee/pybspcov"
+authors:
+  - family-names: Lee
+    given-names: Kyeongwon
+    email: kwlee1718@gmail.com
+references:
+  - type: software
+    title: bspcov
+    authors:
+      - family-names: Lee
+        given-names: Kwangmin
+      - family-names: Lee
+        given-names: Kyeongwon
+      - family-names: Lee
+        given-names: Kyoungjae
+      - family-names: Jo
+        given-names: Seongil
+      - family-names: Lee
+        given-names: Jaeyong
+    version: 1.0.3
+    repository-code: "https://github.com/statjs/bspcov"
+    license: GPL-2.0-or-later
+  - type: article
+    title: The beta-mixture shrinkage prior for sparse covariances with near-minimax posterior convergence rate
+    authors:
+      - family-names: Lee
+        given-names: Kyeongwon
+      - family-names: Jo
+        given-names: Seongil
+      - family-names: Lee
+        given-names: Jaeyong
+    doi: 10.1016/j.jmva.2022.105067
+    year: 2022
+  - type: article
+    title: Scalable and optimal Bayesian inference for sparse covariance matrices via screened beta-mixture prior
+    authors:
+      - family-names: Lee
+        given-names: Kyeongwon
+      - family-names: Jo
+        given-names: Seongil
+      - family-names: Lee
+        given-names: Kyoungjae
+      - family-names: Lee
+        given-names: Jaeyong
+    doi: 10.1214/24-BA1495
+    year: 2024
