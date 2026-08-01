@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from pybspcov.kernels import screening
 from pybspcov.kernels.screening import (
     correlation_screening_mask,
     fnr_screening_mask,
@@ -32,12 +33,25 @@ def test_fnr_screening_returns_active_edges_from_lower_triangle() -> None:
     assert active_mask.dtype == jnp.bool_
 
 
-def test_fnr_screening_has_a_static_jittable_shape() -> None:
+def test_public_fnr_screening_rejects_jit_tracers() -> None:
     scores = jnp.array(
         [[jnp.nan, jnp.nan, jnp.nan], [2.0, jnp.nan, jnp.nan], [0.1, 3.0, jnp.nan]]
     )
 
-    active_mask = jax.jit(lambda values: fnr_screening_mask(values, cutoff=1.0))(scores)
+    with pytest.raises(
+        TypeError, match="host validation.*cannot be used inside jax.jit"
+    ):
+        jax.jit(lambda values: fnr_screening_mask(values, cutoff=1.0))(scores)
+
+
+def test_unchecked_fnr_kernel_has_a_static_jittable_shape() -> None:
+    scores = jnp.array(
+        [[jnp.nan, jnp.nan, jnp.nan], [2.0, jnp.nan, jnp.nan], [0.1, 3.0, jnp.nan]]
+    )
+
+    active_mask = jax.jit(screening._fnr_screening_mask_unchecked)(
+        scores, jnp.asarray(1.0)
+    )
 
     assert active_mask.shape == (3, 3)
     assert jnp.array_equal(active_mask, active_mask.T)
@@ -64,7 +78,18 @@ def test_fnr_screening_rejects_invalid_inputs(
         fnr_screening_mask(scores, cutoff=cutoff)
 
 
-def test_correlation_screening_matches_hand_checked_upstream_case() -> None:
+def test_public_correlation_screening_rejects_jit_tracers() -> None:
+    x = jnp.arange(12.0).reshape(4, 3)
+
+    with pytest.raises(
+        TypeError, match="host validation.*cannot be used inside jax.jit"
+    ):
+        jax.jit(
+            lambda values: correlation_screening_mask(values, retained_fraction=0.5)
+        )(x)
+
+
+def test_unchecked_correlation_kernel_matches_hand_checked_case_under_jit() -> None:
     orthogonal_a = jnp.array([-1.0, -1.0, 1.0, 1.0])
     orthogonal_b = jnp.array([-1.0, 1.0, -1.0, 1.0])
     x = jnp.column_stack((orthogonal_a, orthogonal_a, orthogonal_b))
@@ -72,9 +97,9 @@ def test_correlation_screening_matches_hand_checked_upstream_case() -> None:
         [[False, True, False], [True, False, False], [False, False, False]]
     )
 
-    active_mask = jax.jit(
-        lambda values: correlation_screening_mask(values, retained_fraction=0.5)
-    )(x)
+    active_mask = jax.jit(screening._correlation_screening_mask_unchecked)(
+        x, jnp.asarray(0.5)
+    )
 
     assert jnp.array_equal(active_mask, expected_active_mask)
     assert active_mask.dtype == jnp.bool_
