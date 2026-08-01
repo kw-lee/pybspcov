@@ -168,6 +168,31 @@ def test_out_of_tolerance_posterior_summary_fails(tmp_path: Path) -> None:
     assert failed_quantile["within_tolerance"] is False
 
 
+def test_zero_mcse_requires_exact_agreement(tmp_path: Path) -> None:
+    pybspcov_rows = _summary_rows("pybspcov")
+    r_rows = _summary_rows("bspcov")
+    for row in r_rows + pybspcov_rows:
+        for statistic in (
+            "posterior_mean",
+            "posterior_sd",
+            "q025",
+            "q50",
+            "q975",
+            "rmse",
+        ):
+            row[f"{statistic}_mcse"] = 0.0
+    pybspcov_rows[0]["posterior_mean"] = 1.0 + 1e-15
+    paths = _write_fixture(tmp_path, pybspcov_rows)
+    _write_csv(paths[0], SUMMARY_FIELDS, r_rows)
+
+    result = _compare(paths)
+
+    comparison = result["posterior_comparisons"][0]["statistics"]["posterior_mean"]
+    assert result["statistical_verdict"] == "fail"
+    assert comparison["tolerance"] == 0.0
+    assert comparison["within_tolerance"] is False
+
+
 def test_timing_fields_do_not_determine_statistical_verdict(tmp_path: Path) -> None:
     pybspcov_rows = _summary_rows("pybspcov")
     fast_paths = _write_fixture(

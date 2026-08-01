@@ -176,6 +176,37 @@ detect_hardware <- function() {
   )
 }
 
+validate_draws <- function(draws, n_samples, dimension) {
+  expected_columns <- dimension * (dimension + 1L) / 2L
+  if (!is.matrix(draws)) {
+    stop("bspcov::bmspcov returned a non-matrix Sigma result", call. = FALSE)
+  }
+  if (nrow(draws) != n_samples) {
+    stop(
+      sprintf(
+        "bspcov::bmspcov returned %d draws; expected %d",
+        nrow(draws),
+        n_samples
+      ),
+      call. = FALSE
+    )
+  }
+  if (ncol(draws) != expected_columns) {
+    stop(
+      sprintf(
+        "bspcov::bmspcov returned %d columns; expected %d",
+        ncol(draws),
+        expected_columns
+      ),
+      call. = FALSE
+    )
+  }
+  if (any(!is.finite(draws))) {
+    stop("bspcov::bmspcov returned nonfinite Sigma draws", call. = FALSE)
+  }
+  invisible(draws)
+}
+
 script_argument <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 script_path <- if (length(script_argument) == 1L) {
   normalizePath(sub("^--file=", "", script_argument), mustWork = TRUE)
@@ -239,6 +270,7 @@ sampler_seconds <- system.time({
 })[["elapsed"]]
 
 draws <- fit$Sigma
+validate_draws(draws, arguments$n_samples, p)
 posterior_mean_vector <- colMeans(draws)
 posterior_sd_vector <- apply(draws, MARGIN = 2L, FUN = stats::sd)
 posterior_quantiles <- apply(

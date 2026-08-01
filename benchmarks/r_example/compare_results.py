@@ -12,7 +12,6 @@ from typing import Any
 
 STATISTICS = ("posterior_mean", "posterior_sd", "q025", "q50", "q975")
 STANDARD_ERROR_MULTIPLIER = 6.0
-NUMERICAL_TOLERANCE_FLOOR = 1e-12
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
@@ -68,10 +67,7 @@ def _comparison(
         )
         return result
     combined_mcse = math.hypot(r_mcse, pybspcov_mcse)
-    tolerance = max(
-        STANDARD_ERROR_MULTIPLIER * combined_mcse,
-        NUMERICAL_TOLERANCE_FLOOR,
-    )
+    tolerance = STANDARD_ERROR_MULTIPLIER * combined_mcse
     result.update(
         combined_mcse=combined_mcse,
         tolerance=tolerance,
@@ -167,7 +163,6 @@ def compare_files(
         "schema_version": 1,
         "statistical_verdict": "pass" if all_within_tolerance else "fail",
         "standard_error_multiplier": STANDARD_ERROR_MULTIPLIER,
-        "numerical_tolerance_floor": NUMERICAL_TOLERANCE_FLOOR,
         "posterior_comparisons": posterior_comparisons,
         "rmse_comparison": rmse_comparison,
         "timing_categories": {

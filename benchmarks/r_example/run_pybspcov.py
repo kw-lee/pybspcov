@@ -249,7 +249,7 @@ def _metadata(
         ),
         (
             "end_to_end_timing_scope",
-            "fixture reads through first chain, summary, and metadata CSV writes; excludes warmed repetitions and the final timing CSV write",
+            "sum of pre-warm fixture, first-chain, and summary work plus post-warm summary and metadata CSV writes; excludes warmed repetitions and the final timing CSV write",
         ),
     ]
     return metadata
@@ -343,25 +343,16 @@ def main() -> None:
 
     draws = np.asarray(jax.device_get(first_result.covariance))
     summary = summarize_draws(draws, truth)
-    arguments.output_dir.mkdir(parents=True, exist_ok=True)
-    _write_summary(arguments.output_dir / "pybspcov_summary.csv", summary, truth)
-    with (arguments.output_dir / "pybspcov_metadata.csv").open(
-        "w", newline="", encoding="utf-8"
-    ) as output_file:
-        writer = csv.writer(output_file)
-        writer.writerow(("name", "value"))
-        writer.writerows(
-            _metadata(
-                device=device,
-                n=n,
-                p=p,
-                burnin=arguments.burnin,
-                n_samples=arguments.n_samples,
-                repetitions=arguments.repetitions,
-                summary=summary,
-            )
-        )
-    end_to_end_seconds = time.perf_counter() - end_to_end_start
+    metadata_rows = _metadata(
+        device=device,
+        n=n,
+        p=p,
+        burnin=arguments.burnin,
+        n_samples=arguments.n_samples,
+        repetitions=arguments.repetitions,
+        summary=summary,
+    )
+    pre_warm_seconds = time.perf_counter() - end_to_end_start
 
     with jax.default_device(device):
         warmed_seconds = []
@@ -377,6 +368,19 @@ def main() -> None:
             elapsed = time.perf_counter() - warmed_start
             validate_chain_output(warmed_result.accepted, warmed_result.covariance)
             warmed_seconds.append(elapsed)
+
+    output_write_start = time.perf_counter()
+    arguments.output_dir.mkdir(parents=True, exist_ok=True)
+    _write_summary(arguments.output_dir / "pybspcov_summary.csv", summary, truth)
+    with (arguments.output_dir / "pybspcov_metadata.csv").open(
+        "w", newline="", encoding="utf-8"
+    ) as output_file:
+        writer = csv.writer(output_file)
+        writer.writerow(("name", "value"))
+        writer.writerows(metadata_rows)
+    output_write_seconds = time.perf_counter() - output_write_start
+    end_to_end_seconds = pre_warm_seconds + output_write_seconds
+
     with (arguments.output_dir / "pybspcov_timing.csv").open(
         "w", newline="", encoding="utf-8"
     ) as output_file:
