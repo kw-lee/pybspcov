@@ -135,6 +135,11 @@ def detect_physical_cores() -> str:
     return "unavailable"
 
 
+def jax_platform_name(device: str) -> str:
+    """Translate the user-facing device alias to a registered JAX platform."""
+    return "cuda" if device == "gpu" else device
+
+
 def select_device(platform_name: str) -> jax.Device:
     """Select one requested JAX device or fail with an actionable message."""
     try:
@@ -296,7 +301,7 @@ def _write_summary(path: Path, summary: dict[str, Any], truth: np.ndarray) -> No
 
 def main() -> None:
     arguments = _parse_args()
-    jax.config.update("jax_platforms", arguments.device)
+    jax.config.update("jax_platforms", jax_platform_name(arguments.device))
     jax.config.update("jax_enable_x64", True)
     device = select_device(arguments.device)
     end_to_end_start = time.perf_counter()

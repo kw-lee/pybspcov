@@ -11,6 +11,7 @@ sys.path.insert(0, str(BENCHMARK_DIR))
 from compare_results import compare_files
 from run_pybspcov import (
     detect_cpu_model,
+    jax_platform_name,
     summarize_draws,
     validate_chain_output,
 )
@@ -310,3 +311,10 @@ def test_chain_validation_rejects_nonfinite_draws() -> None:
 
 def test_cpu_model_detection_returns_a_nonempty_provenance_value() -> None:
     assert detect_cpu_model().strip()
+
+
+@pytest.mark.parametrize(("device", "platform_name"), [("cpu", "cpu"), ("gpu", "cuda")])
+def test_cli_device_maps_to_registered_jax_platform(
+    device: str, platform_name: str
+) -> None:
+    assert jax_platform_name(device) == platform_name
