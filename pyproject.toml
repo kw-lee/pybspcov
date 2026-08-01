@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pybspcov"
+version = "0.1.0.dev0"
+description = "JAX-accelerated Bayesian sparse covariance estimation"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "GPL-2.0-or-later"
+authors = [{ name = "Kyeongwon Lee", email = "kwlee1718@gmail.com" }]
+dependencies = ["jax>=0.11.0,<0.12"]
+
+[dependency-groups]
+dev = [
+  "build>=1.3",
+  "mypy>=1.17",
+  "pre-commit>=4.3",
+  "pytest>=8.4",
+  "pytest-cov>=6.2",
+  "ruff>=0.12",
+  "twine>=6.1",
+]
+docs = [
+  "furo>=2025.7",
+  "myst-parser>=4.0",
+  "sphinx>=8.2,<9",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pybspcov"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers --strict-config"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["pybspcov"]
