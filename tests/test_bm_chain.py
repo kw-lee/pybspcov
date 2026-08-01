@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from pybspcov.kernels.bm import initialize_bm_state, sample_bm_chain
+from pybspcov.kernels.bm import bm_sweep, initialize_bm_state, sample_bm_chain
 
 
 def test_sample_bm_chain_discards_burnin_and_is_reproducible() -> None:
@@ -22,13 +22,14 @@ def test_sample_bm_chain_discards_burnin_and_is_reproducible() -> None:
     tau1sq = jnp.array(10_000.0 / (x.shape[0] * x.shape[1] ** 4))
     state = initialize_bm_state(covariance, tau1sq)
     other_indices = jnp.array([[1, 2], [0, 2], [0, 1]], dtype=jnp.int32)
+    master_key = jax.random.key(42)
     run_chain = jax.jit(
         sample_bm_chain,
         static_argnames=("burnin", "n_samples"),
     )
 
     result = run_chain(
-        jax.random.key(42),
+        master_key,
         state,
         scatter,
         other_indices,
@@ -41,7 +42,7 @@ def test_sample_bm_chain_discards_burnin_and_is_reproducible() -> None:
         n_samples=3,
     )
     repeated = run_chain(
-        jax.random.key(42),
+        master_key,
         state,
         scatter,
         other_indices,
@@ -54,11 +55,39 @@ def test_sample_bm_chain_discards_burnin_and_is_reproducible() -> None:
         n_samples=3,
     )
 
+    expected_state = state
+    expected_covariance = []
+    expected_phi = []
+    expected_accepted = []
+    for sweep_key in jax.random.split(master_key, 5):
+        sweep_result = bm_sweep(
+            sweep_key,
+            expected_state,
+            scatter,
+            other_indices,
+            jnp.array(x.shape[0]),
+            jnp.array(0.5),
+            jnp.array(0.5),
+            jnp.array(1.0),
+            tau1sq,
+        )
+        expected_state = sweep_result.state
+        expected_covariance.append(expected_state.covariance)
+        expected_phi.append(expected_state.phi)
+        expected_accepted.append(sweep_result.accepted)
+
+    expected_covariance_array = jnp.stack(expected_covariance[2:])
+    expected_phi_array = jnp.stack(expected_phi[2:])
+    expected_accepted_array = jnp.stack(expected_accepted)
     assert result.covariance.shape == (3, 3, 3)
     assert result.phi.shape == (3, 3, 3)
     assert result.accepted.shape == (5,)
     assert jnp.all(result.accepted)
-    assert jnp.allclose(result.final_state.covariance, result.covariance[-1])
+    assert jnp.allclose(result.covariance, expected_covariance_array)
+    assert jnp.allclose(result.phi, expected_phi_array)
+    assert jnp.array_equal(result.accepted, expected_accepted_array)
+    for actual, expected in zip(result.final_state, expected_state, strict=True):
+        assert jnp.allclose(actual, expected)
     assert jnp.allclose(result.covariance, repeated.covariance)
     assert jnp.allclose(result.phi, repeated.phi)
 

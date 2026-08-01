@@ -296,7 +296,12 @@ def sample_bm_chain(
     burnin: int,
     n_samples: int,
 ) -> BMChainResult:
-    """Run sequential BM sweeps and retain draws after burn-in."""
+    """Run sequential BM sweeps and retain draws after burn-in.
+
+    ``burnin`` and ``n_samples`` determine output shapes. When wrapping this
+    function in :func:`jax.jit`, declare both with
+    ``static_argnames=("burnin", "n_samples")``.
+    """
     if burnin < 0:
         raise ValueError("burnin must be non-negative")
     if n_samples <= 0:
