@@ -67,9 +67,11 @@ def bm_sweep(
         indices = other_indices[column]
         precision_block = current.precision[jnp.ix_(indices, indices)]
         precision_cross = current.precision[indices, column]
-        conditional_precision = precision_block - jnp.outer(
-            precision_cross, precision_cross
-        ) / current.precision[column, column]
+        conditional_precision = (
+            precision_block
+            - jnp.outer(precision_cross, precision_cross)
+            / current.precision[column, column]
+        )
         scatter_block = scatter[jnp.ix_(indices, indices)]
         scatter_cross = scatter[indices, column]
         conditional_scatter = conditional_precision @ scatter_cross
@@ -145,10 +147,7 @@ def bm_sweep(
             jnp.stack([jnp.all(jnp.isfinite(value)) for value in updated])
         )
         accepted = (
-            sweep_accepted
-            & gamma_draw.accepted
-            & jnp.all(phi_draws.accepted)
-            & finite
+            sweep_accepted & gamma_draw.accepted & jnp.all(phi_draws.accepted) & finite
         )
         return updated, current_key, accepted
 
