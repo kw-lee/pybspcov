@@ -30,9 +30,10 @@ def update_covariance_column(
         gamma + beta @ conditional_times_beta
     )
 
-    updated_block = conditional_precision + jnp.outer(
-        conditional_times_beta, conditional_times_beta
-    ) / gamma
+    updated_block = (
+        conditional_precision
+        + jnp.outer(conditional_times_beta, conditional_times_beta) / gamma
+    )
     updated_cross = -conditional_times_beta / gamma
     updated_precision = precision.at[jnp.ix_(other_indices, other_indices)].set(
         updated_block
