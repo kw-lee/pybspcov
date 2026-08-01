@@ -54,7 +54,7 @@ parse_arguments <- function(arguments, default_output_directory) {
       if (option == "--burnin") {
         parsed$burnin <- parse_positive_integer(value, option, minimum = 0L)
       } else if (option == "--n-samples") {
-        parsed$n_samples <- parse_positive_integer(value, option, minimum = 2L)
+        parsed$n_samples <- parse_positive_integer(value, option, minimum = 4L)
       } else {
         parsed$output_directory <- value
       }
@@ -250,6 +250,48 @@ posterior_quantiles <- apply(
   type = 7L
 )
 
+n_batches <- min(20L, floor(nrow(draws) / 2L))
+batch_size <- floor(nrow(draws) / n_batches)
+trimmed_samples <- n_batches * batch_size
+trimmed_draws <- draws[seq_len(trimmed_samples), , drop = FALSE]
+batch_rows <- split(
+  seq_len(trimmed_samples),
+  rep(seq_len(n_batches), each = batch_size)
+)
+parameter_count <- ncol(draws)
+batch_means <- vapply(
+  batch_rows,
+  function(rows) colMeans(trimmed_draws[rows, , drop = FALSE]),
+  numeric(parameter_count)
+)
+batch_sds <- vapply(
+  batch_rows,
+  function(rows) apply(
+    trimmed_draws[rows, , drop = FALSE],
+    MARGIN = 2L,
+    FUN = stats::sd
+  ),
+  numeric(parameter_count)
+)
+batch_quantiles <- lapply(
+  QUANTILE_PROBABILITIES,
+  function(probability) vapply(
+    batch_rows,
+    function(rows) apply(
+      trimmed_draws[rows, , drop = FALSE],
+      MARGIN = 2L,
+      FUN = stats::quantile,
+      probs = probability,
+      names = FALSE,
+      type = 7L
+    ),
+    numeric(parameter_count)
+  )
+)
+batch_mcse <- function(value) {
+  apply(value, MARGIN = 1L, FUN = stats::sd) / sqrt(n_batches)
+}
+
 vech_to_symmetric <- function(value, dimension) {
   result <- matrix(0, nrow = dimension, ncol = dimension)
   result[lower.tri(result, diag = TRUE)] <- value
@@ -262,6 +304,19 @@ q025 <- vech_to_symmetric(posterior_quantiles[1L, ], p)
 q50 <- vech_to_symmetric(posterior_quantiles[2L, ], p)
 q975 <- vech_to_symmetric(posterior_quantiles[3L, ], p)
 rmse <- sqrt(mean((posterior_mean - true_sigma)^2))
+posterior_mean_mcse <- vech_to_symmetric(batch_mcse(batch_means), p)
+posterior_sd_mcse <- vech_to_symmetric(batch_mcse(batch_sds), p)
+q025_mcse <- vech_to_symmetric(batch_mcse(batch_quantiles[[1L]]), p)
+q50_mcse <- vech_to_symmetric(batch_mcse(batch_quantiles[[2L]]), p)
+q975_mcse <- vech_to_symmetric(batch_mcse(batch_quantiles[[3L]]), p)
+batch_rmses <- vapply(
+  seq_len(n_batches),
+  function(batch) sqrt(mean(
+    (vech_to_symmetric(batch_means[, batch], p) - true_sigma)^2
+  )),
+  numeric(1L)
+)
+rmse_mcse <- stats::sd(batch_rmses) / sqrt(n_batches)
 
 row_indices <- rep(seq_len(p), times = p)
 column_indices <- rep(seq_len(p), each = p)
@@ -270,12 +325,18 @@ summary_output <- data.frame(
   row = row_indices,
   column = column_indices,
   posterior_mean = as.vector(posterior_mean),
+  posterior_mean_mcse = as.vector(posterior_mean_mcse),
   posterior_sd = as.vector(posterior_sd),
+  posterior_sd_mcse = as.vector(posterior_sd_mcse),
   q025 = as.vector(q025),
+  q025_mcse = as.vector(q025_mcse),
   q50 = as.vector(q50),
+  q50_mcse = as.vector(q50_mcse),
   q975 = as.vector(q975),
+  q975_mcse = as.vector(q975_mcse),
   truth = as.vector(true_sigma),
   rmse = rmse,
+  rmse_mcse = rmse_mcse,
   stringsAsFactors = FALSE
 )
 
@@ -301,6 +362,9 @@ metadata_output <- data.frame(
     "p",
     "burnin",
     "n_samples",
+    "n_batches",
+    "batch_size",
+    "trimmed_samples",
     "chains",
     "repetitions",
     "fixture_seed",
@@ -329,6 +393,9 @@ metadata_output <- data.frame(
     as.character(p),
     as.character(arguments$burnin),
     as.character(arguments$n_samples),
+    as.character(n_batches),
+    as.character(batch_size),
+    as.character(trimmed_samples),
     "1",
     "1",
     as.character(FIXTURE_SEED),
