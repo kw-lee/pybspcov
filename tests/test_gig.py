@@ -18,12 +18,14 @@ def test_gig_samples_are_positive_and_match_theoretical_mean() -> None:
 
     keys = jax.random.split(jax.random.key(13), 8_192)
     samples = jax.vmap(
-        lambda key: sample_gig(
-            key,
-            jnp.array(-2.0),
-            jnp.array(2.0),
-            jnp.array(1.0),
-        ).value
+        lambda key: (
+            sample_gig(
+                key,
+                jnp.array(-2.0),
+                jnp.array(2.0),
+                jnp.array(1.0),
+            ).value
+        )
     )(keys)
     omega = jnp.sqrt(2.0)
     expected_mean = jnp.sqrt(2.0) * kv(-1.0, omega) / kv(-2.0, omega)
