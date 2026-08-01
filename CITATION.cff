@@ -3,7 +3,6 @@ message: "If you use pybspcov, please cite this software and the method papers."
 title: pybspcov
 type: software
 version: 0.1.0.dev0
-date-released: "2026-08-01"
 license: GPL-2.0-or-later
 repository-code: "https://github.com/kw-lee/pybspcov"
 authors:

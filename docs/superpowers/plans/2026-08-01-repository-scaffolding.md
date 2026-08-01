@@ -294,11 +294,11 @@ git commit -m "chore: add local quality gates"
 Create `docs/source/conf.py`:
 
 ```python
-from importlib.metadata import version
+from importlib.metadata import version as package_version
 
 project = "pybspcov"
 author = "Kyeongwon Lee"
-release = version("pybspcov")
+release = package_version("pybspcov")
 extensions = ["myst_parser", "sphinx.ext.autodoc", "sphinx.ext.napoleon"]
 source_suffix = {".md": "markdown", ".rst": "restructuredtext"}
 master_doc = "index"
@@ -639,6 +639,8 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
+          version: "0.8.8"
+          python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked --all-groups
       - run: uv run pre-commit run --all-files
@@ -652,6 +654,8 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
+          version: "0.8.8"
+          python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked --all-groups
       - run: uv run pytest --cov=pybspcov --cov-report=term-missing -q
@@ -662,6 +666,8 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
+          version: "0.8.8"
+          python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked --all-groups
       - run: uv run sphinx-build -W --keep-going -b html docs/source docs/_build/html
@@ -672,6 +678,8 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
+          version: "0.8.8"
+          python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked --all-groups
       - run: uv run python -m build
@@ -779,7 +787,6 @@ message: "If you use pybspcov, please cite this software and the method papers."
 title: pybspcov
 type: software
 version: 0.1.0.dev0
-date-released: "2026-08-01"
 license: GPL-2.0-or-later
 repository-code: "https://github.com/kw-lee/pybspcov"
 authors:
