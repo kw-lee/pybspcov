@@ -12,6 +12,9 @@ license = "GPL-2.0-or-later"
 authors = [{ name = "Kyeongwon Lee", email = "kwlee1718@gmail.com" }]
 dependencies = ["jax>=0.11.0,<0.12"]
 
+[project.optional-dependencies]
+cuda12 = ["jax[cuda12]>=0.11.0,<0.12"]
+
 [dependency-groups]
 dev = [
   "build>=1.3",

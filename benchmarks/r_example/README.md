@@ -20,12 +20,17 @@ run settings documented.
 - Use Python 3.12 or newer and the locked project environment (`uv sync
   --frozen`). The project constrains JAX to `>=0.11.0,<0.12`, and the runner
   enables float64.
-- Select JAX CPU or GPU explicitly with `--device`. GPU runs require a
-  CUDA-capable JAX installation, a visible supported GPU, and sufficient free
-  device memory. A missing backend or device produces an unavailable-device
-  error. For this benchmark host, NVIDIA driver 575 can use a CUDA 12 JAX
-  build; that is a host-specific example, not a package requirement. R runs on
-  CPU.
+- Select JAX CPU or GPU explicitly with `--device`. Before a GPU run, install
+  the locked optional environment with `uv sync --frozen --extra cuda12`.
+  The lockfile pins `jax-cuda12-plugin` and `jax-cuda12-pjrt` at 0.11.0 and
+  the NVIDIA CUDA 12 runtime wheels, including `nvidia-cuda-runtime-cu12` at
+  12.9.79. Do not substitute manually installed plugin or runtime versions in
+  a reproducible run.
+- GPU runs also require a visible supported GPU and sufficient free device
+  memory. A missing backend or device produces an unavailable-device error.
+  For this benchmark host, NVIDIA driver 575 can use the locked CUDA 12 stack;
+  that is a host-specific example, not a general package requirement. R runs
+  on CPU.
 - For timing work, keep hardware, load, power settings, and thread environment
   fixed. Both runners record device/CPU and thread provenance in metadata.
 
@@ -50,7 +55,7 @@ To measure JAX on GPU, use a separate output directory and replace `cpu` with
 without retaining that distinction.
 
 ```sh
-JAX_ENABLE_X64=1 uv run python benchmarks/r_example/run_pybspcov.py \
+JAX_ENABLE_X64=1 uv run --frozen --extra cuda12 python benchmarks/r_example/run_pybspcov.py \
   --burnin 1000 --n-samples 1000 --repetitions 5 --device gpu \
   --output-dir benchmarks/r_example/results/pybspcov-gpu
 ```
