@@ -22,7 +22,11 @@ def test_actions_are_pinned_to_full_shas() -> None:
     workflow = Path(".github/workflows/ci.yml")
     assert workflow.is_file()
     for line in workflow.read_text(encoding="utf-8").splitlines():
-        uses = re.match(r"^\s*(?:-\s+)?uses:\s*(?P<reference>[^\s#]+)", line)
+        uses = re.match(
+            r"^\s*(?:-\s+)?(?P<quote>[\"\x27]?)uses(?P=quote)\s*:\s*"
+            r"(?P<reference>[^\s#]+)",
+            line,
+        )
         if uses is None:
             continue
         reference = uses.group("reference")
@@ -70,3 +74,15 @@ def test_action_pin_policy_ignores_commented_out_uses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _run_action_pin_policy("# - uses: actions/checkout@v6\n", tmp_path, monkeypatch)
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["uses ", chr(39) + "uses" + chr(39), chr(34) + "uses" + chr(34)],
+    ids=["spaced-colon", "single-quoted", "double-quoted"],
+)
+def test_action_pin_policy_checks_valid_yaml_key_syntax(
+    key: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with pytest.raises(AssertionError):
+        _run_action_pin_policy(f"- {key}: actions/checkout@v6\n", tmp_path, monkeypatch)
