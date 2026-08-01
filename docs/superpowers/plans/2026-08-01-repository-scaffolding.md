@@ -24,9 +24,12 @@
 
 ## Execution Graph
 
-Task 1 is serial. After Task 1 merges, Tasks 2, 3, and 4 may run in parallel in
-separate worktrees because their primary files do not overlap. Task 5 integrates
-their contracts and is serial. Task 6 verifies the combined scaffold.
+Tasks 1 through 6 run sequentially for this repository scaffold. Tasks 2, 3,
+and 4 have distinct primary deliverables, but they share the locked environment
+and repository-wide verification commands, so each receives its own review gate
+on the same scaffold branch. Parallel work begins with the independent
+post-scaffold plans listed below. Task 5 integrates the scaffold contracts and
+Task 6 verifies the combined result.
 
 After this plan, create separate implementation plans for:
 
@@ -203,38 +206,12 @@ git commit -m "build: scaffold the pybspcov package"
 **Files:**
 - Create: `.pre-commit-config.yaml`
 - Modify: `pyproject.toml` only if a verified tool option is missing.
-- Modify: `tests/test_package_metadata.py`
 
 **Interfaces:**
 - Consumes: package and dependency configuration from Task 1.
 - Produces: deterministic `format`, `lint`, `typecheck`, and `test` commands.
 
-- [ ] **Step 1: Add a failing repository-policy test**
-
-Append:
-
-```python
-from pathlib import Path
-
-
-def test_precommit_uses_project_environment() -> None:
-    config = Path(".pre-commit-config.yaml")
-    assert config.is_file()
-    text = config.read_text(encoding="utf-8")
-    assert "repo: local" in text
-    assert "id: ruff-check" in text
-    assert "id: ruff-format" in text
-    assert "id: mypy" in text
-    assert "id: pytest" in text
-```
-
-- [ ] **Step 2: Run the focused test and observe the failure**
-
-Run: `uv run pytest tests/test_package_metadata.py::test_precommit_uses_project_environment -v`
-
-Expected: FAIL because `.pre-commit-config.yaml` is absent.
-
-- [ ] **Step 3: Add local pre-commit hooks**
+- [ ] **Step 1: Add local pre-commit hooks**
 
 Use the locked project environment rather than duplicating tool versions in
 remote hook environments. Create `.pre-commit-config.yaml`:
@@ -271,7 +248,17 @@ Ruff is check-only in the hook so commits never mutate files implicitly.
 Developers apply changes explicitly with `uv run ruff check --fix` and
 `uv run ruff format`.
 
-- [ ] **Step 4: Run all local quality gates**
+- [ ] **Step 2: Validate the configuration through its consumer**
+
+Run:
+
+```bash
+uv run pre-commit validate-config
+```
+
+Expected: exit 0 with no configuration error.
+
+- [ ] **Step 3: Run all local quality gates**
 
 Run:
 
@@ -283,10 +270,10 @@ uv run pytest -q
 
 Expected: all commands exit 0.
 
-- [ ] **Step 5: Commit quality configuration**
+- [ ] **Step 4: Commit quality configuration**
 
 ```bash
-git add .pre-commit-config.yaml pyproject.toml tests/test_package_metadata.py
+git add .pre-commit-config.yaml pyproject.toml
 git commit -m "chore: add local quality gates"
 ```
 
@@ -297,32 +284,12 @@ git commit -m "chore: add local quality gates"
 - Create: `docs/source/index.md`
 - Create: `docs/source/installation.md`
 - Create: `docs/source/development.md`
-- Modify: `tests/test_package_metadata.py`
 
 **Interfaces:**
 - Consumes: package metadata and the existing `docs/README.md` separation contract.
 - Produces: warning-free HTML documentation under `docs/_build/html`.
 
-- [ ] **Step 1: Add a failing documentation-layout test**
-
-Append:
-
-```python
-def test_sphinx_sources_are_isolated_from_internal_plans() -> None:
-    source = Path("docs/source")
-    assert (source / "conf.py").is_file()
-    assert (source / "index.md").is_file()
-    index = (source / "index.md").read_text(encoding="utf-8")
-    assert "superpowers" not in index.lower()
-```
-
-- [ ] **Step 2: Observe the missing-source failure**
-
-Run: `uv run pytest tests/test_package_metadata.py::test_sphinx_sources_are_isolated_from_internal_plans -v`
-
-Expected: FAIL because `docs/source` is absent.
-
-- [ ] **Step 3: Configure Sphinx and MyST**
+- [ ] **Step 1: Configure Sphinx and MyST**
 
 Create `docs/source/conf.py`:
 
@@ -407,21 +374,22 @@ before submitting a change.
 Only `installation` and `development` enter the MyST toctree. Do not add
 `docs/superpowers` to the Sphinx source tree.
 
-- [ ] **Step 4: Build documentation with warnings as errors**
+- [ ] **Step 2: Build documentation with warnings as errors**
 
 Run:
 
 ```bash
 uv run sphinx-build -W --keep-going -b html docs/source docs/_build/html
-uv run pytest tests/test_package_metadata.py -v
 ```
 
-Expected: both commands exit 0.
+Expected: the command exits 0 and Sphinx emits no warning. The explicit
+`docs/source` argument proves that internal plans are outside the published
+documentation build.
 
-- [ ] **Step 5: Commit Sphinx sources**
+- [ ] **Step 3: Commit Sphinx sources**
 
 ```bash
-git add docs/source tests/test_package_metadata.py
+git add docs/source
 git commit -m "docs: add the Sphinx documentation skeleton"
 ```
 
@@ -433,50 +401,12 @@ git commit -m "docs: add the Sphinx documentation skeleton"
 - Create: `AGENTS.md`
 - Create: `docs/development/ai-assisted-development.md`
 - Create: `.github/pull_request_template.md`
-- Modify: `tests/test_package_metadata.py`
 
 **Interfaces:**
 - Consumes: `docs/development/workflow.md` and the approved AI-assisted development policy.
 - Produces: human and agent contribution contracts used during pull-request review.
 
-- [ ] **Step 1: Add a failing policy-file test**
-
-Append:
-
-```python
-import pytest
-
-
-@pytest.mark.parametrize(
-    "path",
-    [
-        "CONTRIBUTING.md",
-        "SECURITY.md",
-        "AGENTS.md",
-        "docs/development/ai-assisted-development.md",
-        ".github/pull_request_template.md",
-    ],
-)
-def test_required_policy_file_exists(path: str) -> None:
-    assert Path(path).is_file()
-
-
-def test_policy_contracts_are_explicit() -> None:
-    security = Path("SECURITY.md").read_text(encoding="utf-8")
-    agents = Path("AGENTS.md").read_text(encoding="utf-8")
-    contributing = Path("CONTRIBUTING.md").read_text(encoding="utf-8")
-    assert "kwlee1718@gmail.com" in security
-    assert "one bounded task" in agents
-    assert "material AI assistance" in contributing
-```
-
-- [ ] **Step 2: Observe the policy-file failure**
-
-Run: `uv run pytest tests/test_package_metadata.py::test_required_policy_file_exists -v`
-
-Expected: FAIL for each absent file.
-
-- [ ] **Step 3: Write the English policies**
+- [ ] **Step 1: Write the English policies**
 
 Create `CONTRIBUTING.md`:
 
@@ -612,21 +542,28 @@ private data.
 State compatibility risks, limitations, and deferred work.
 ```
 
-- [ ] **Step 4: Run policy and Markdown checks**
+- [ ] **Step 2: Review policy files and run repository checks**
 
 Run:
 
 ```bash
-uv run pytest tests/test_package_metadata.py -v
 uv run pre-commit run --all-files
+git diff --check
+test -f CONTRIBUTING.md
+test -f SECURITY.md
+test -f AGENTS.md
+test -f docs/development/ai-assisted-development.md
+test -f .github/pull_request_template.md
 ```
 
-Expected: all commands exit 0.
+Expected: all commands exit 0. Review the staged diff against the Task 4
+templates; prose is reviewed by humans rather than protected by brittle
+source-text assertions.
 
-- [ ] **Step 5: Commit governance files**
+- [ ] **Step 3: Commit governance files**
 
 ```bash
-git add CONTRIBUTING.md SECURITY.md AGENTS.md docs/development .github/pull_request_template.md tests/test_package_metadata.py
+git add CONTRIBUTING.md SECURITY.md AGENTS.md docs/development .github/pull_request_template.md
 git commit -m "docs: define contribution and security policy"
 ```
 
