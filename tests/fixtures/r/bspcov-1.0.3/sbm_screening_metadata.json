@@ -6,6 +6,18 @@
   "index_base": 0,
   "n": 12,
   "p": 4,
+  "generation_environment": {
+    "r_version": "4.5.0",
+    "rng_version": "4.5.0",
+    "rng_kind": [
+      "Mersenne-Twister",
+      "Inversion",
+      "Rejection"
+    ],
+    "BayesFactor_version": "0.9.12.4.7",
+    "MASS_version": "7.3.65",
+    "numeric_precision": "IEEE 754 double"
+  },
   "mask_semantics": {
     "excluded": "true_for_upstream_INDzero",
     "active": "true_for_retained_off_diagonal_edge"
@@ -13,6 +25,7 @@
   "fnr": {
     "method": "FNR",
     "seed": 314159,
+    "internal_cutoff_seed": 910796002,
     "rho": 0.25,
     "FNR": 0.05,
     "nsimdata": 1000,

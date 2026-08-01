@@ -1,5 +1,12 @@
 options(digits = 17, scipen = 999)
 
+rng_version <- "4.5.0"
+RNGversion(rng_version)
+r_version <- as.character(getRversion())
+rng_kind <- RNGkind()
+bayes_factor_version <- as.character(utils::packageVersion("BayesFactor"))
+mass_version <- as.character(utils::packageVersion("MASS"))
+
 expected_version <- "1.0.3"
 actual_version <- as.character(utils::packageVersion("bspcov"))
 if (!identical(actual_version, expected_version)) {
@@ -80,6 +87,10 @@ initial_covariance <- matrix(
 invisible(chol(initial_covariance))
 
 seed <- 314159L
+# Observe the seed that select_cutoff() derives internally. The subsequent
+# public sbmspcov() call resets to seed before repeating the same draw.
+set.seed(seed)
+internal_cutoff_seed <- sample(.Machine$integer.max, 1)
 sampler_settings <- list(burnin = 0L, nmc = 1L)
 
 # Calling the exported function verifies the default FNR branch, including
@@ -142,6 +153,20 @@ write_csv(
   "sbm_screening_corr_covariance.csv"
 )
 
+session_details <- c(
+  capture.output(utils::sessionInfo()),
+  "",
+  sprintf("Pinned RNGversion: %s", rng_version),
+  sprintf("RNGkind: %s", paste(rng_kind, collapse = ", ")),
+  sprintf("Observed select_cutoff internal seed: %d", internal_cutoff_seed),
+  "Numeric precision: IEEE 754 double"
+)
+session_details <- sub("[[:blank:]]+$", "", session_details)
+writeLines(
+  session_details,
+  file.path(output_dir, "sbm_screening_session_info.txt")
+)
+
 metadata <- c(
   "{",
   '  "package": "bspcov",',
@@ -151,6 +176,18 @@ metadata <- c(
   '  "index_base": 0,',
   sprintf('  "n": %d,', n),
   sprintf('  "p": %d,', p),
+  '  "generation_environment": {',
+  sprintf('    "r_version": "%s",', r_version),
+  sprintf('    "rng_version": "%s",', rng_version),
+  '    "rng_kind": [',
+  sprintf('      "%s",', rng_kind[[1]]),
+  sprintf('      "%s",', rng_kind[[2]]),
+  sprintf('      "%s"', rng_kind[[3]]),
+  "    ],",
+  sprintf('    "BayesFactor_version": "%s",', bayes_factor_version),
+  sprintf('    "MASS_version": "%s",', mass_version),
+  '    "numeric_precision": "IEEE 754 double"',
+  "  },",
   '  "mask_semantics": {',
   '    "excluded": "true_for_upstream_INDzero",',
   '    "active": "true_for_retained_off_diagonal_edge"',
@@ -158,6 +195,7 @@ metadata <- c(
   '  "fnr": {',
   '    "method": "FNR",',
   sprintf('    "seed": %d,', seed),
+  sprintf('    "internal_cutoff_seed": %d,', internal_cutoff_seed),
   '    "rho": 0.25,',
   '    "FNR": 0.05,',
   '    "nsimdata": 1000,',

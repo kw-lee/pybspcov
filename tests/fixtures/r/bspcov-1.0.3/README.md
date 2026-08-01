@@ -32,7 +32,16 @@ The FNR fixture uses the public defaults `rho=0.25`, `FNR=0.05`, and
 normal data with correlation `rho`, computes
 `exp(BayesFactor::correlationBF(..., rscale="ultrawide")@bayesFactor$bf)`, and
 uses its `FNR` quantile as the cutoff. `BayesCGM.SS()` retains an edge only
-when its pairwise Bayes factor is strictly greater than that cutoff.
+when its pairwise Bayes factor is strictly greater than that cutoff. With
+RNGversion `4.5.0`, `seed=314159` deterministically produces the internal
+`select_cutoff()` seed `910796002`; the generator observes that draw before
+calling `sbmspcov()`, whose public `seed` argument resets the RNG and therefore
+preserves the upstream random path.
+
+The fixture was generated with R 4.5.0, RNGkind `Mersenne-Twister`, `Inversion`,
+and `Rejection`, BayesFactor 0.9.12.4.7, MASS 7.3.65, and IEEE 754 double
+precision. Full platform, BLAS, locale, and loaded-package details are in
+`sbm_screening_session_info.txt`.
 
 The correlation fixture selects `cutoff=list(method="corr")`, whose actual
 implementation default is `thr=0.2`. `BayesCGM.SS.CORR()` takes the
@@ -51,7 +60,9 @@ The input, raw lower-triangular Bayes factors, full correlation matrix,
 initial covariance, screened covariances, and generation parameters are also
 committed. R's `NA` spelling is preserved in the unused diagonal and upper
 triangle of `sbm_screening_pairwise_bf.csv`. All indices described by the
-metadata are zero-based for Python consumers.
+metadata are zero-based for Python consumers. Tests pin the literal FNR and
+correlation cutoffs plus every lower-triangular Bayes factor and correlation,
+so dependency or RNG drift fails instead of silently rewriting the reference.
 
 Regenerate from the repository root with exactly `bspcov` 1.0.3 installed:
 

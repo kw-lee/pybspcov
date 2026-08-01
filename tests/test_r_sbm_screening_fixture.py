@@ -31,6 +31,14 @@ def test_sbm_screening_fixture_has_expected_schema_and_provenance() -> None:
     assert metadata["index_base"] == 0
     assert metadata["n"] == 12
     assert metadata["p"] == 4
+    assert metadata["generation_environment"] == {
+        "r_version": "4.5.0",
+        "rng_version": "4.5.0",
+        "rng_kind": ["Mersenne-Twister", "Inversion", "Rejection"],
+        "BayesFactor_version": "0.9.12.4.7",
+        "MASS_version": "7.3.65",
+        "numeric_precision": "IEEE 754 double",
+    }
     assert metadata["mask_semantics"] == {
         "excluded": "true_for_upstream_INDzero",
         "active": "true_for_retained_off_diagonal_edge",
@@ -38,6 +46,7 @@ def test_sbm_screening_fixture_has_expected_schema_and_provenance() -> None:
     assert metadata["fnr"] == {
         "method": "FNR",
         "seed": 314159,
+        "internal_cutoff_seed": 910796002,
         "rho": 0.25,
         "FNR": 0.05,
         "nsimdata": 1000,
@@ -61,6 +70,57 @@ def test_sbm_screening_fixture_has_expected_schema_and_provenance() -> None:
     np.testing.assert_allclose(np.diag(correlations), 1.0, atol=1e-15)
     assert np.isnan(bayes_factors[np.triu_indices(metadata["p"])]).all()
     assert np.isfinite(bayes_factors[np.tril_indices(metadata["p"], k=-1)]).all()
+
+
+def test_sbm_screening_reference_statistics_are_stable() -> None:
+    metadata = _load_metadata()
+    bayes_factors = _load_csv("sbm_screening_pairwise_bf.csv")
+    correlations = _load_csv("sbm_screening_correlations.csv")
+    expected_lower_bayes_factors = np.array(
+        [
+            3.7074170496227903,
+            0.35434956200158324,
+            0.35434956200158324,
+            0.93800153391090568,
+            0.52118256809958097,
+            0.35434956200158324,
+        ]
+    )
+    expected_correlations = np.array(
+        [
+            [
+                1.0,
+                0.65000000000000024,
+                -3.6632480902853981e-17,
+                -0.4499999999999999,
+            ],
+            [
+                0.65000000000000024,
+                1.0,
+                1.2486197378770367e-16,
+                -0.29250000000000009,
+            ],
+            [
+                -3.6632480902853981e-17,
+                1.2486197378770367e-16,
+                1.0,
+                2.817841446289826e-16,
+            ],
+            [
+                -0.4499999999999999,
+                -0.29250000000000009,
+                2.817841446289826e-16,
+                1.0,
+            ],
+        ]
+    )
+
+    assert metadata["fnr"]["cutoff"] == 0.35605260903947278
+    assert metadata["corr"]["cutoff"] == 0.4499999999999999
+    np.testing.assert_array_equal(
+        bayes_factors[np.tril_indices(4, k=-1)], expected_lower_bayes_factors
+    )
+    np.testing.assert_array_equal(correlations, expected_correlations)
 
 
 def test_fnr_fixture_encodes_upstream_strict_bayes_factor_screening() -> None:
