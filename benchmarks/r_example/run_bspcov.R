@@ -4,6 +4,13 @@ BASELINE_BSPCOV_VERSION <- "1.0.3"
 FIXTURE_SEED <- 1L
 SAMPLER_SEED <- 1L
 QUANTILE_PROBABILITIES <- c(0.025, 0.5, 0.975)
+THREAD_ENVIRONMENT_VARIABLES <- c(
+  "OMP_NUM_THREADS",
+  "OPENBLAS_NUM_THREADS",
+  "MKL_NUM_THREADS",
+  "VECLIB_MAXIMUM_THREADS",
+  "BLIS_NUM_THREADS"
+)
 
 usage <- function() {
   paste(
@@ -59,6 +66,116 @@ parse_arguments <- function(arguments, default_output_directory) {
   parsed
 }
 
+first_available <- function(value, fallback = "unavailable") {
+  usable <- value[!is.na(value) & nzchar(value)]
+  if (length(usable) == 0L) fallback else as.character(usable[[1L]])
+}
+
+detect_cpu_model <- function() {
+  system_name <- first_available(unname(Sys.info()["sysname"]))
+  if (system_name == "Linux" && file.exists("/proc/cpuinfo")) {
+    cpuinfo <- tryCatch(
+      readLines("/proc/cpuinfo", warn = FALSE),
+      error = function(error) character()
+    )
+    model_lines <- grep("^model name[[:space:]]*:", cpuinfo, value = TRUE)
+    if (length(model_lines) > 0L) {
+      return(trimws(sub("^[^:]*:", "", model_lines[[1L]])))
+    }
+  }
+  if (system_name == "Darwin" && nzchar(Sys.which("sysctl"))) {
+    model <- tryCatch(
+      system2(
+        "sysctl",
+        c("-n", "machdep.cpu.brand_string"),
+        stdout = TRUE,
+        stderr = FALSE
+      ),
+      error = function(error) character()
+    )
+    if (length(model) > 0L && nzchar(model[[1L]])) return(model[[1L]])
+  }
+  if (system_name == "Windows") {
+    model <- Sys.getenv("PROCESSOR_IDENTIFIER", unset = "")
+    if (nzchar(model)) return(model)
+  }
+  architecture <- first_available(unname(Sys.info()["machine"]))
+  sprintf("unavailable (architecture: %s)", architecture)
+}
+
+detect_linux_physical_cores <- function() {
+  if (
+    first_available(unname(Sys.info()["sysname"])) != "Linux" ||
+      !file.exists("/proc/cpuinfo")
+  ) {
+    return(NA_integer_)
+  }
+  cpuinfo <- tryCatch(
+    readLines("/proc/cpuinfo", warn = FALSE),
+    error = function(error) character()
+  )
+  if (length(cpuinfo) == 0L) return(NA_integer_)
+  records <- strsplit(paste(cpuinfo, collapse = "\n"), "\n\n", fixed = TRUE)[[1L]]
+  core_pairs <- vapply(
+    records,
+    function(record) {
+      lines <- strsplit(record, "\n", fixed = TRUE)[[1L]]
+      physical_id <- grep("^physical id[[:space:]]*:", lines, value = TRUE)
+      core_id <- grep("^core id[[:space:]]*:", lines, value = TRUE)
+      if (length(physical_id) == 0L || length(core_id) == 0L) {
+        return(NA_character_)
+      }
+      paste(
+        trimws(sub("^[^:]*:", "", physical_id[[1L]])),
+        trimws(sub("^[^:]*:", "", core_id[[1L]])),
+        sep = ":"
+      )
+    },
+    character(1L)
+  )
+  core_pairs <- unique(core_pairs[!is.na(core_pairs)])
+  if (length(core_pairs) == 0L) NA_integer_ else length(core_pairs)
+}
+
+format_core_count <- function(value) {
+  if (length(value) == 1L && !is.na(value) && value > 0L) {
+    as.character(as.integer(value))
+  } else {
+    "unavailable"
+  }
+}
+
+detect_hardware <- function() {
+  logical_cores <- suppressWarnings(parallel::detectCores(logical = TRUE))
+  physical_cores <- detect_linux_physical_cores()
+  if (
+    is.na(physical_cores) &&
+      first_available(unname(Sys.info()["sysname"])) != "Linux"
+  ) {
+    physical_cores <- suppressWarnings(parallel::detectCores(logical = FALSE))
+  }
+  software_versions <- tryCatch(extSoftVersion(), error = function(error) NULL)
+  blas <- if (is.null(software_versions)) {
+    "unavailable"
+  } else {
+    first_available(unname(software_versions["BLAS"]))
+  }
+  lapack <- first_available(
+    tryCatch(La_library(), error = function(error) character())
+  )
+  list(
+    cpu_model = detect_cpu_model(),
+    logical_cores = format_core_count(logical_cores),
+    physical_cores = format_core_count(physical_cores),
+    blas = blas,
+    lapack = lapack,
+    thread_environment = Sys.getenv(
+      THREAD_ENVIRONMENT_VARIABLES,
+      unset = "<unset>"
+    )
+  )
+}
+
 script_argument <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
 script_path <- if (length(script_argument) == 1L) {
   normalizePath(sub("^--file=", "", script_argument), mustWork = TRUE)
@@ -92,6 +209,7 @@ if (
   )
 }
 
+end_to_end_start <- proc.time()[["elapsed"]]
 fixture_directory <- file.path(script_directory, "data")
 read_matrix <- function(filename) {
   as.matrix(utils::read.csv(
@@ -108,7 +226,7 @@ p <- ncol(x)
 
 # X is the explicitly centered, committed output of generate_case.R. Do not
 # center it again here: the future JAX runner must consume these exact values.
-elapsed <- system.time({
+sampler_seconds <- system.time({
   fit <- bspcov::bmspcov(
     X = x,
     Sigma = initial_sigma,
@@ -161,13 +279,8 @@ summary_output <- data.frame(
   stringsAsFactors = FALSE
 )
 
-timing_output <- data.frame(
-  implementation = "bspcov",
-  end_to_end_seconds = as.numeric(elapsed),
-  stringsAsFactors = FALSE
-)
-
 session <- utils::sessionInfo()
+hardware <- detect_hardware()
 metadata_output <- data.frame(
   name = c(
     "implementation",
@@ -178,6 +291,12 @@ metadata_output <- data.frame(
     "platform",
     "dtype",
     "device",
+    "cpu_model",
+    "logical_cores",
+    "physical_cores",
+    "blas",
+    "lapack",
+    THREAD_ENVIRONMENT_VARIABLES,
     "n",
     "p",
     "burnin",
@@ -187,6 +306,8 @@ metadata_output <- data.frame(
     "fixture_seed",
     "sampler_seed",
     "fixture_centered",
+    "sampler_timing_scope",
+    "end_to_end_timing_scope",
     "session_info"
   ),
   value = c(
@@ -198,6 +319,12 @@ metadata_output <- data.frame(
     R.version$platform,
     "float64",
     "CPU",
+    hardware$cpu_model,
+    hardware$logical_cores,
+    hardware$physical_cores,
+    hardware$blas,
+    hardware$lapack,
+    unname(hardware$thread_environment),
     as.character(n),
     as.character(p),
     as.character(arguments$burnin),
@@ -207,6 +334,11 @@ metadata_output <- data.frame(
     as.character(FIXTURE_SEED),
     as.character(SAMPLER_SEED),
     "true",
+    "bspcov::bmspcov only",
+    paste(
+      "fixture reads through summary and metadata CSV writes;",
+      "excludes the final timing CSV write"
+    ),
     paste(utils::capture.output(print(session)), collapse = "\n")
   ),
   stringsAsFactors = FALSE
@@ -219,12 +351,19 @@ utils::write.csv(
   row.names = FALSE
 )
 utils::write.csv(
-  timing_output,
-  file.path(arguments$output_directory, "r_timing.csv"),
-  row.names = FALSE
-)
-utils::write.csv(
   metadata_output,
   file.path(arguments$output_directory, "r_metadata.csv"),
+  row.names = FALSE
+)
+end_to_end_seconds <- proc.time()[["elapsed"]] - end_to_end_start
+timing_output <- data.frame(
+  implementation = "bspcov",
+  sampler_seconds = as.numeric(sampler_seconds),
+  end_to_end_seconds = as.numeric(end_to_end_seconds),
+  stringsAsFactors = FALSE
+)
+utils::write.csv(
+  timing_output,
+  file.path(arguments$output_directory, "r_timing.csv"),
   row.names = FALSE
 )
