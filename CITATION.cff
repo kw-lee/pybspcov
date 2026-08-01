@@ -31,7 +31,7 @@ references:
     title: The beta-mixture shrinkage prior for sparse covariances with near-minimax posterior convergence rate
     authors:
       - family-names: Lee
-        given-names: Kyeongwon
+        given-names: Kyoungjae
       - family-names: Jo
         given-names: Seongil
       - family-names: Lee
@@ -42,12 +42,12 @@ references:
     title: Scalable and optimal Bayesian inference for sparse covariance matrices via screened beta-mixture prior
     authors:
       - family-names: Lee
-        given-names: Kyeongwon
+        given-names: Kyoungjae
       - family-names: Jo
         given-names: Seongil
       - family-names: Lee
-        given-names: Kyoungjae
+        given-names: Kyeongwon
       - family-names: Lee
         given-names: Jaeyong
     doi: 10.1214/24-BA1495
-    year: 2024
+    year: 2026

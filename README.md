@@ -87,13 +87,14 @@ This project is derived from `bspcov`, version 1.0.3 at the time of bootstrap:
 
 The initial port is based on methods described in:
 
-- Lee, K., Jo, S., and Lee, J. (2022). The beta-mixture shrinkage prior for
-  sparse covariances with near-minimax posterior convergence rate. *Journal of
-  Multivariate Analysis*, 192, 105067.
+- Kyoungjae Lee, Seongil Jo, and Jaeyong Lee (2022). The beta-mixture shrinkage
+  prior for sparse covariances with near-minimax posterior convergence rate.
+  *Journal of Multivariate Analysis*, 192, 105067.
   <https://doi.org/10.1016/j.jmva.2022.105067>
-- Lee, K., Jo, S., Lee, K., and Lee, J. (2024). Scalable and optimal Bayesian
-  inference for sparse covariance matrices via screened beta-mixture prior.
-  *Bayesian Analysis*. <https://doi.org/10.1214/24-BA1495>
+- Kyoungjae Lee, Seongil Jo, Kyeongwon Lee, and Jaeyong Lee (2026). Scalable
+  and optimal Bayesian inference for sparse covariance matrices via screened
+  beta-mixture prior. *Bayesian Analysis*, 21(2).
+  <https://doi.org/10.1214/24-BA1495>
 
 ## License
 
