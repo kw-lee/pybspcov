@@ -4,6 +4,7 @@ from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 
 from pybspcov.kernels.bm import (
@@ -14,6 +15,29 @@ from pybspcov.kernels.bm import (
 )
 from pybspcov.kernels.covariance import update_covariance_column
 from pybspcov.sampling.gig import _sample_gig_batch, sample_gig
+
+
+class SBMCompactStructure(NamedTuple):
+    """Host-precomputed fixed-width active lanes for all SBM columns."""
+
+    other_indices: Array
+    active_positions: Array
+    lane_mask: Array
+
+
+class SBMCompactColumnParameters(NamedTuple):
+    """Dense Schur complement and compact-width active beta parameters."""
+
+    lane_mask: Array
+    active_count: Array
+    conditional_precision: Array
+    conditional_scatter: Array
+    quadratic: Array
+    gamma_lambda: Array
+    gamma_chi: Array
+    gamma_psi: Array
+    beta_precision: Array
+    beta_mean: Array
 
 
 class SBMColumnParameters(NamedTuple):
@@ -84,6 +108,75 @@ def sbm_column_parameters(
         gamma_lambda=moments.gamma_lambda,
         gamma_chi=moments.gamma_chi,
         gamma_psi=moments.gamma_psi,
+        beta_precision=beta_precision,
+        beta_mean=beta_mean,
+    )
+
+
+def compact_sbm_column_parameters(
+    *,
+    covariance: Array,
+    precision: Array,
+    scatter: Array,
+    tau: Array,
+    column: Array,
+    structure: SBMCompactStructure,
+    n_observations: Array,
+    diagonal_rate: Array,
+    gamma: Array,
+) -> SBMCompactColumnParameters:
+    """Return dense Schur moments and compact-width beta conditionals."""
+    other_indices = structure.other_indices[column]
+    active_positions = structure.active_positions[column]
+    lane_mask = structure.lane_mask[column]
+    compact_indices = other_indices[active_positions]
+
+    precision_block = precision[jnp.ix_(other_indices, other_indices)]
+    precision_cross = precision[other_indices, column]
+    conditional_precision = (
+        precision_block
+        - jnp.outer(precision_cross, precision_cross) / precision[column, column]
+    )
+    reduced_rows = jnp.where(
+        lane_mask[:, None],
+        conditional_precision[active_positions, :],
+        0.0,
+    )
+    scatter_block = scatter[jnp.ix_(other_indices, other_indices)]
+    scatter_cross = scatter[other_indices, column]
+    conditional_scatter = reduced_rows @ scatter_cross
+    quadratic = reduced_rows @ scatter_block @ reduced_rows.T
+    beta = jnp.where(lane_mask, covariance[compact_indices, column], 0.0)
+    gamma_chi = (
+        beta @ quadratic @ beta
+        - 2.0 * beta @ conditional_scatter
+        + scatter[column, column]
+    )
+
+    lane_outer = lane_mask[:, None] & lane_mask[None, :]
+    conditional_block = conditional_precision[
+        jnp.ix_(active_positions, active_positions)
+    ]
+    unmasked_beta_precision = (
+        quadratic / gamma
+        + jnp.diag(1.0 / tau[compact_indices, column])
+        + diagonal_rate * conditional_block
+    )
+    beta_precision = jnp.where(lane_outer, unmasked_beta_precision, 0.0)
+    beta_precision = beta_precision + jnp.diag((~lane_mask).astype(covariance.dtype))
+    beta_precision = 0.5 * (beta_precision + beta_precision.T)
+    beta_mean = jnp.linalg.solve(beta_precision, conditional_scatter) / gamma
+    beta_mean = jnp.where(lane_mask, beta_mean, 0.0)
+
+    return SBMCompactColumnParameters(
+        lane_mask=lane_mask,
+        active_count=jnp.sum(lane_mask, dtype=jnp.int32),
+        conditional_precision=conditional_precision,
+        conditional_scatter=conditional_scatter,
+        quadratic=quadratic,
+        gamma_lambda=1.0 - n_observations / 2.0,
+        gamma_chi=gamma_chi,
+        gamma_psi=diagonal_rate,
         beta_precision=beta_precision,
         beta_mean=beta_mean,
     )
@@ -446,3 +539,54 @@ def validate_sbm_active_mask(
     if bool(jnp.any(jnp.diag(mask))):
         raise ValueError("active_mask diagonal must be false")
     return mask
+
+
+def prepare_sbm_compact_structure(
+    active_mask: Array,
+    other_indices: Array,
+) -> SBMCompactStructure:
+    """Build fixed-width active lane positions before compiled sampling."""
+    mask = jnp.asarray(active_mask)
+    if mask.ndim != 2 or mask.shape[0] != mask.shape[1]:
+        raise ValueError("active_mask must be a square two-dimensional array")
+    dimension = mask.shape[0]
+    mask = validate_sbm_active_mask(mask, dimension=dimension)
+
+    indices = jnp.asarray(other_indices)
+    if isinstance(indices, jax.core.Tracer):
+        raise TypeError("prepare_sbm_compact_structure requires concrete other_indices")
+    if indices.ndim != 2 or indices.shape != (dimension, dimension - 1):
+        raise ValueError(
+            f"other_indices must have shape ({dimension}, {dimension - 1})"
+        )
+    index_array = np.asarray(jax.device_get(indices))
+    if not np.issubdtype(index_array.dtype, np.integer):
+        raise TypeError("other_indices must contain integer values")
+    if np.any((index_array < 0) | (index_array >= dimension)):
+        raise ValueError(
+            f"other_indices values must be between zero and {dimension - 1}"
+        )
+    for column, row in enumerate(index_array):
+        if column in row:
+            raise ValueError("each other_indices row must exclude its column")
+        if np.unique(row).size != dimension - 1:
+            raise ValueError(
+                "each other_indices row must contain every other index exactly once"
+            )
+
+    mask_array = np.asarray(jax.device_get(mask))
+    column_positions = [
+        np.flatnonzero(mask_array[index_array[column], column]).astype(np.int32)
+        for column in range(dimension)
+    ]
+    compact_width = max((positions.size for positions in column_positions), default=0)
+    active_positions = np.zeros((dimension, compact_width), dtype=np.int32)
+    lane_mask = np.zeros((dimension, compact_width), dtype=np.bool_)
+    for column, positions in enumerate(column_positions):
+        active_positions[column, : positions.size] = positions
+        lane_mask[column, : positions.size] = True
+    return SBMCompactStructure(
+        other_indices=indices,
+        active_positions=jnp.asarray(active_positions),
+        lane_mask=jnp.asarray(lane_mask),
+    )
