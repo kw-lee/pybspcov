@@ -1,0 +1,40 @@
+{
+  "package": "bspcov",
+  "package_version": "1.0.3",
+  "source_tag": "1.0.3",
+  "source_commit": "165106c5ab8f6506e6d69b0b8f94ce5bdc99092f",
+  "index_base": 0,
+  "n": 12,
+  "p": 4,
+  "generation_environment": {
+    "r_version": "4.5.0",
+    "rng_version": "4.5.0",
+    "rng_kind": [
+      "Mersenne-Twister",
+      "Inversion",
+      "Rejection"
+    ],
+    "BayesFactor_version": "0.9.12.4.7",
+    "MASS_version": "7.3.65",
+    "numeric_precision": "IEEE 754 double"
+  },
+  "mask_semantics": {
+    "excluded": "true_for_upstream_INDzero",
+    "active": "true_for_retained_off_diagonal_edge"
+  },
+  "fnr": {
+    "method": "FNR",
+    "seed": 314159,
+    "internal_cutoff_seed": 910796002,
+    "rho": 0.25,
+    "FNR": 0.05,
+    "nsimdata": 1000,
+    "cutoff": 0.35605260903947278
+  },
+  "corr": {
+    "method": "corr",
+    "thr": 0.2,
+    "quantile_probability": 0.8,
+    "cutoff": 0.4499999999999999
+  }
+}
