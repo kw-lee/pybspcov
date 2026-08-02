@@ -11,6 +11,10 @@ from pybspcov.kernels.bm import (
     sample_bm_chain,
 )
 from pybspcov.kernels.covariance import update_covariance_column
+from pybspcov.kernels.screening import (
+    correlation_screening_mask,
+    fnr_screening_mask,
+)
 
 __all__ = [
     "BMChainResult",
@@ -19,6 +23,8 @@ __all__ = [
     "BMSweepResult",
     "bm_column_parameters",
     "bm_sweep",
+    "correlation_screening_mask",
+    "fnr_screening_mask",
     "initialize_bm_state",
     "sample_bm_chain",
     "update_covariance_column",
