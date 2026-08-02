@@ -144,6 +144,15 @@ GPU correctness jobs may run concurrently when resources permit. Performance
 benchmarks must hold an exclusive GPU reservation and record other device
 activity so concurrent jobs do not contaminate timing or memory results.
 
+### CI Accelerator Policy
+
+The required pull-request suite runs on CPU and tests accelerator selection and
+failure handling with deterministic mocks. It must not initialize CUDA or infer
+GPU availability from a generic GitHub-hosted runner. Real CUDA smoke and
+correctness checks belong in a separate workflow backed by an explicitly
+provisioned GPU runner; performance benchmarks remain manual or scheduled and
+must never be a required check on ordinary pull requests.
+
 ## Agentic and AI-Assisted Work
 
 An agentic worker receives one bounded task and one worktree. Two workers must
