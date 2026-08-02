@@ -66,7 +66,8 @@ def test_unchecked_fnr_kernel_has_a_static_jittable_shape() -> None:
         (jnp.array([[0.0, 0.0], [jnp.nan, 0.0]]), 1.0, "lower triangle"),
         (jnp.array([[0.0, 0.0], [-0.1, 0.0]]), 1.0, "non-negative"),
         (jnp.ones((2, 2)), -0.1, "non-negative"),
-        (jnp.ones((2, 2)), jnp.inf, "finite"),
+        (jnp.ones((2, 2)), jnp.nan, "must not be NaN"),
+        (jnp.ones((2, 2)), -jnp.inf, "non-negative"),
     ],
 )
 def test_fnr_screening_rejects_invalid_inputs(

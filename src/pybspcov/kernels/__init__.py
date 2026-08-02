@@ -37,7 +37,9 @@ from pybspcov.kernels.sbm import (
 )
 from pybspcov.kernels.screening import (
     correlation_screening_mask,
+    estimate_fnr_cutoff,
     fnr_screening_mask,
+    pairwise_jeffreys_bayes_factors,
 )
 
 __all__ = [
@@ -56,10 +58,12 @@ __all__ = [
     "compact_sbm_column_parameters",
     "compact_sbm_sweep",
     "correlation_screening_mask",
+    "estimate_fnr_cutoff",
     "fnr_screening_mask",
     "initialize_bm_state",
     "initialize_sbm_state",
     "pack_lower_triangle_column_major",
+    "pairwise_jeffreys_bayes_factors",
     "prepare_sbm_compact_structure",
     "sample_bm_chain",
     "sample_bm_chains",
