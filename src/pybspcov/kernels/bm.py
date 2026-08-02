@@ -49,6 +49,49 @@ class BMChainResult(NamedTuple):
     accepted: Array
 
 
+class BMPackedChainResult(NamedTuple):
+    """R-ordered lower-triangle BM draws and the final chain state."""
+
+    final_state: BMState
+    covariance: Array
+    phi: Array
+    accepted: Array
+
+
+def _lower_triangle_column_major_indices(dimension: int) -> tuple[Array, Array]:
+    upper_rows, upper_columns = jnp.triu_indices(dimension)
+    return upper_columns, upper_rows
+
+
+def pack_lower_triangle_column_major(matrix: Array) -> Array:
+    """Pack symmetric matrices in R's column-major lower-triangle order."""
+    if matrix.ndim < 2 or matrix.shape[-2] != matrix.shape[-1]:
+        raise ValueError("matrix must end in equal square dimensions")
+    rows, columns = _lower_triangle_column_major_indices(matrix.shape[-1])
+    return matrix[..., rows, columns]
+
+
+def unpack_lower_triangle_column_major(
+    packed: Array,
+    *,
+    dimension: int,
+) -> Array:
+    """Reconstruct symmetric matrices from R-ordered lower triangles."""
+    if dimension < 1:
+        raise ValueError("dimension must be positive")
+    if packed.ndim < 1:
+        raise ValueError("packed must have a trailing lower-triangle dimension")
+    expected = dimension * (dimension + 1) // 2
+    if packed.shape[-1] != expected:
+        raise ValueError(
+            f"packed trailing dimension must be {expected}; received {packed.shape[-1]}"
+        )
+    rows, columns = _lower_triangle_column_major_indices(dimension)
+    matrix = jnp.zeros((*packed.shape[:-1], dimension, dimension), dtype=packed.dtype)
+    matrix = matrix.at[..., rows, columns].set(packed)
+    return matrix.at[..., columns, rows].set(packed)
+
+
 class _BMColumnMoments(NamedTuple):
     conditional_precision: Array
     conditional_scatter: Array
@@ -385,6 +428,131 @@ def sample_bm_chains(
 
     return jax.vmap(
         lambda chain_key, chain_state: sample_bm_chain(
+            chain_key,
+            chain_state,
+            scatter,
+            other_indices,
+            n_observations,
+            a,
+            b,
+            diagonal_rate,
+            tau1sq,
+            burnin=burnin,
+            n_samples=n_samples,
+        )
+    )(keys, states)
+
+
+def sample_bm_packed_chain(
+    key: Array,
+    state: BMState,
+    scatter: Array,
+    other_indices: Array,
+    n_observations: Array,
+    a: Array,
+    b: Array,
+    diagonal_rate: Array,
+    tau1sq: Array,
+    *,
+    burnin: int,
+    n_samples: int,
+) -> BMPackedChainResult:
+    """Run one BM chain while retaining only R-ordered lower triangles."""
+    if burnin < 0:
+        raise ValueError("burnin must be non-negative")
+    if n_samples <= 0:
+        raise ValueError("n_samples must be positive")
+    sweep_keys = jax.random.split(key, burnin + n_samples)
+
+    def advance(
+        current: BMState,
+        sweep_key: Array,
+    ) -> tuple[BMState, Array]:
+        result = bm_sweep(
+            sweep_key,
+            current,
+            scatter,
+            other_indices,
+            n_observations,
+            a,
+            b,
+            diagonal_rate,
+            tau1sq,
+        )
+        return result.state, result.accepted
+
+    posterior_initial_state, burnin_accepted = jax.lax.scan(
+        advance,
+        state,
+        sweep_keys[:burnin],
+    )
+
+    def retain(
+        current: BMState,
+        sweep_key: Array,
+    ) -> tuple[BMState, tuple[Array, Array, Array]]:
+        result = bm_sweep(
+            sweep_key,
+            current,
+            scatter,
+            other_indices,
+            n_observations,
+            a,
+            b,
+            diagonal_rate,
+            tau1sq,
+        )
+        return result.state, (
+            pack_lower_triangle_column_major(result.state.covariance),
+            pack_lower_triangle_column_major(result.state.phi),
+            result.accepted,
+        )
+
+    final_state, (covariance, phi, posterior_accepted) = jax.lax.scan(
+        retain,
+        posterior_initial_state,
+        sweep_keys[burnin:],
+    )
+    return BMPackedChainResult(
+        final_state=final_state,
+        covariance=covariance,
+        phi=phi,
+        accepted=jnp.concatenate((burnin_accepted, posterior_accepted)),
+    )
+
+
+def sample_bm_packed_chains(
+    keys: Array,
+    states: BMState,
+    scatter: Array,
+    other_indices: Array,
+    n_observations: Array,
+    a: Array,
+    b: Array,
+    diagonal_rate: Array,
+    tau1sq: Array,
+    *,
+    burnin: int,
+    n_samples: int,
+) -> BMPackedChainResult:
+    """Run independent BM chains with packed retained draws."""
+    if keys.ndim != 1:
+        raise ValueError("keys must be a one-dimensional batch")
+    if not jnp.issubdtype(keys.dtype, jax.dtypes.prng_key):
+        raise TypeError("keys must contain typed JAX keys from jax.random.key")
+    chain_count = keys.shape[0]
+    if chain_count < 1:
+        raise ValueError("keys must contain at least one chain")
+    for field_name, value in zip(BMState._fields, states, strict=True):
+        if value.ndim != 3 or value.shape[0] != chain_count:
+            raise ValueError(
+                "state leading dimension must match keys; "
+                f"state.{field_name} has shape {value.shape}, expected "
+                f"({chain_count}, p, p)"
+            )
+
+    return jax.vmap(
+        lambda chain_key, chain_state: sample_bm_packed_chain(
             chain_key,
             chain_state,
             scatter,
