@@ -756,3 +756,160 @@ def test_sample_compact_sbm_chain_validates_static_lengths(
             burnin=burnin,
             n_samples=n_samples,
         )
+
+
+def _compact_rollback_case() -> tuple[sbm.BMState, tuple[jax.Array, ...]]:
+    dtype = jnp.float32
+    covariance, _, scatter, _ = _column_case(dtype)
+    tau1sq = jnp.asarray(0.15, dtype=dtype)
+    state = sbm.initialize_sbm_state(covariance, tau1sq, ACTIVE_MASK)
+    structure = sbm.prepare_sbm_compact_structure(ACTIVE_MASK, OTHER_INDICES)
+    arguments = (
+        scatter,
+        jnp.asarray(6),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(1.0, dtype=dtype),
+        tau1sq,
+        structure,
+    )
+    return state, arguments
+
+
+def _accept_compact_phi(
+    keys: jax.Array,
+    lambda_: jax.Array,
+    chi: jax.Array,
+    psi: jax.Array,
+) -> GIGSample:
+    del keys, lambda_, psi
+    return GIGSample(
+        value=jnp.ones_like(chi),
+        accepted=jnp.ones_like(chi, dtype=jnp.bool_),
+        iterations=jnp.ones_like(chi, dtype=jnp.int32),
+    )
+
+
+def _assert_compact_state_exact(
+    actual: sbm.BMState,
+    expected: sbm.BMState,
+) -> None:
+    for field_name, actual_value, expected_value in zip(
+        sbm.BMState._fields,
+        actual,
+        expected,
+        strict=True,
+    ):
+        assert jnp.array_equal(actual_value, expected_value), field_name
+
+
+def test_compact_sbm_sweep_rolls_back_earlier_columns_after_late_gamma_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state, arguments = _compact_rollback_case()
+    sweep_key = jax.random.key(233)
+    target_key_data = jax.random.key_data(_compact_column_gamma_key(sweep_key, 2))
+
+    def reject_late_gamma(
+        key: jax.Array,
+        lambda_: jax.Array,
+        chi: jax.Array,
+        psi: jax.Array,
+    ) -> GIGSample:
+        del lambda_, psi
+        rejected = jnp.all(jax.random.key_data(key) == target_key_data)
+        return GIGSample(
+            value=jnp.ones_like(chi),
+            accepted=~rejected,
+            iterations=jnp.asarray(1, dtype=jnp.int32),
+        )
+
+    monkeypatch.setattr(sbm, "sample_gig", reject_late_gamma)
+    monkeypatch.setattr(sbm, "_sample_gig_batch", _accept_compact_phi)
+
+    run_sweep = jax.jit(
+        lambda key, initial_state, *sweep_arguments: sbm.compact_sbm_sweep(
+            key, initial_state, *sweep_arguments
+        )
+    )
+    result = run_sweep(sweep_key, state, *arguments)
+
+    assert not result.accepted
+    _assert_compact_state_exact(result.state, state)
+
+
+def test_compact_sbm_sweep_rolls_back_all_state_after_active_phi_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state, arguments = _compact_rollback_case()
+
+    def accept_gamma(
+        key: jax.Array,
+        lambda_: jax.Array,
+        chi: jax.Array,
+        psi: jax.Array,
+    ) -> GIGSample:
+        del key, lambda_, psi
+        return GIGSample(
+            value=jnp.ones_like(chi),
+            accepted=jnp.asarray(True),
+            iterations=jnp.asarray(1, dtype=jnp.int32),
+        )
+
+    def reject_active_phi(
+        keys: jax.Array,
+        lambda_: jax.Array,
+        chi: jax.Array,
+        psi: jax.Array,
+    ) -> GIGSample:
+        del keys, lambda_, psi
+        return GIGSample(
+            value=jnp.ones_like(chi),
+            accepted=jnp.zeros_like(chi, dtype=jnp.bool_),
+            iterations=jnp.ones_like(chi, dtype=jnp.int32),
+        )
+
+    monkeypatch.setattr(sbm, "sample_gig", accept_gamma)
+    monkeypatch.setattr(sbm, "_sample_gig_batch", reject_active_phi)
+
+    run_sweep = jax.jit(
+        lambda key, initial_state, *sweep_arguments: sbm.compact_sbm_sweep(
+            key, initial_state, *sweep_arguments
+        )
+    )
+    result = run_sweep(jax.random.key(239), state, *arguments)
+
+    assert not result.accepted
+    _assert_compact_state_exact(result.state, state)
+
+
+def test_compact_sbm_sweep_rolls_back_nonfinite_candidate_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state, arguments = _compact_rollback_case()
+
+    def accept_nonfinite_gamma(
+        key: jax.Array,
+        lambda_: jax.Array,
+        chi: jax.Array,
+        psi: jax.Array,
+    ) -> GIGSample:
+        del key, lambda_, psi
+        return GIGSample(
+            value=jnp.full_like(chi, jnp.nan),
+            accepted=jnp.asarray(True),
+            iterations=jnp.asarray(1, dtype=jnp.int32),
+        )
+
+    monkeypatch.setattr(sbm, "sample_gig", accept_nonfinite_gamma)
+    monkeypatch.setattr(sbm, "_sample_gig_batch", _accept_compact_phi)
+
+    run_sweep = jax.jit(
+        lambda key, initial_state, *sweep_arguments: sbm.compact_sbm_sweep(
+            key, initial_state, *sweep_arguments
+        )
+    )
+    result = run_sweep(jax.random.key(241), state, *arguments)
+
+    assert not result.accepted
+    _assert_compact_state_exact(result.state, state)
