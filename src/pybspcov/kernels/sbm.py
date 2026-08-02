@@ -163,6 +163,68 @@ def _sbm_beta_parameters(
     return beta_precision, beta_mean
 
 
+def _update_sbm_local_scales(
+    *,
+    phi_key: Array,
+    psi_key: Array,
+    beta: Array,
+    active: Array,
+    active_count: Array,
+    current_phi: Array,
+    current_psi: Array,
+    current_tau: Array,
+    a: Array,
+    b: Array,
+    tau1sq: Array,
+    dtype: jnp.dtype,
+) -> tuple[Array, Array, Array, Array]:
+    """Update active local scales without executing a fully screened GIG batch."""
+    padded_count = active.shape[0]
+
+    def preserve_scales(_: None) -> tuple[Array, Array, Array, Array]:
+        return current_phi, current_psi, current_tau, jnp.asarray(True)
+
+    def sample_active_scales(_: None) -> tuple[Array, Array, Array, Array]:
+        phi_keys = jax.random.split(phi_key, padded_count)
+        phi_chi = jnp.where(
+            active,
+            jnp.maximum(jnp.square(beta) / tau1sq, 1e-6),
+            jnp.asarray(-1.0, dtype=dtype),
+        )
+        phi_psi = jnp.where(
+            active,
+            2.0 * current_psi,
+            jnp.asarray(-1.0, dtype=dtype),
+        )
+        phi_draws = _sample_gig_batch(phi_keys, a - 0.5, phi_chi, phi_psi)
+        phi_accepted = active & phi_draws.accepted
+        phi_values = jnp.where(phi_accepted, phi_draws.value, current_phi)
+        psi_draws = jax.random.gamma(
+            psi_key,
+            a + b,
+            shape=(padded_count,),
+            dtype=dtype,
+        )
+        psi_values = jnp.where(
+            phi_accepted,
+            psi_draws / (phi_values + 1.0),
+            current_psi,
+        )
+        tau_values = jnp.where(phi_accepted, phi_values * tau1sq, current_tau)
+        accepted = jnp.all((~active) | phi_draws.accepted)
+        return phi_values, psi_values, tau_values, accepted
+
+    if padded_count == 0:
+        return preserve_scales(None)
+    result: tuple[Array, Array, Array, Array] = jax.lax.cond(
+        active_count == 0,
+        preserve_scales,
+        sample_active_scales,
+        operand=None,
+    )
+    return result
+
+
 def initialize_sbm_state(
     covariance: Array,
     tau1sq: Array,
@@ -255,44 +317,19 @@ def sbm_sweep(
             gamma,
         )
 
-        phi_keys = jax.random.split(phi_key, padded_count)
-        phi_chi = jnp.where(
-            moments.active,
-            jnp.maximum(jnp.square(beta) / tau1sq, 1e-6),
-            jnp.asarray(-1.0, dtype=dtype),
-        )
-        phi_psi = jnp.where(
-            moments.active,
-            2.0 * current.psi[indices, column],
-            jnp.asarray(-1.0, dtype=dtype),
-        )
-        phi_draws = _sample_gig_batch(
-            phi_keys,
-            a - 0.5,
-            phi_chi,
-            phi_psi,
-        )
-        phi_accepted = moments.active & phi_draws.accepted
-        phi_values = jnp.where(
-            phi_accepted,
-            phi_draws.value,
-            current.phi[indices, column],
-        )
-        psi_draws = jax.random.gamma(
-            psi_key,
-            a + b,
-            shape=(padded_count,),
+        phi_values, psi_values, tau_values, scales_accepted = _update_sbm_local_scales(
+            phi_key=phi_key,
+            psi_key=psi_key,
+            beta=beta,
+            active=moments.active,
+            active_count=moments.active_count,
+            current_phi=current.phi[indices, column],
+            current_psi=current.psi[indices, column],
+            current_tau=current.tau[indices, column],
+            a=a,
+            b=b,
+            tau1sq=tau1sq,
             dtype=dtype,
-        ) / (phi_values + 1.0)
-        psi_values = jnp.where(
-            phi_accepted,
-            psi_draws,
-            current.psi[indices, column],
-        )
-        tau_values = jnp.where(
-            phi_accepted,
-            phi_values * tau1sq,
-            current.tau[indices, column],
         )
 
         phi = current.phi.at[indices, column].set(phi_values)
@@ -305,12 +342,7 @@ def sbm_sweep(
         finite = jnp.logical_and.reduce(
             jnp.stack([jnp.all(jnp.isfinite(value)) for value in updated])
         )
-        accepted = (
-            sweep_accepted
-            & gamma_draw.accepted
-            & jnp.all((~moments.active) | phi_draws.accepted)
-            & finite
-        )
+        accepted = sweep_accepted & gamma_draw.accepted & scales_accepted & finite
         return updated, current_key, accepted
 
     updated, _, accepted = jax.lax.fori_loop(

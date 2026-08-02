@@ -338,6 +338,59 @@ def test_sbm_sweep_preserves_screened_zeros_and_dense_inverse(
         assert jnp.array_equal(actual, expected)
 
 
+@pytest.mark.parametrize("dtype_name", ["float32", "float64"])
+def test_sbm_sweep_fully_screened_skips_phi_gig(
+    dtype_name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if dtype_name == "float64" and not jax.config.x64_enabled:
+        pytest.skip("float64 requires JAX_ENABLE_X64=1")
+    dtype = getattr(jnp, dtype_name)
+    covariance, _, scatter, _, _ = _column_case(dtype)
+    active_mask = jnp.zeros((4, 4), dtype=jnp.bool_)
+    tau1sq = jnp.asarray(0.15, dtype=dtype)
+    other_indices = jnp.asarray(
+        [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]], dtype=jnp.int32
+    )
+    state = initialize_sbm_state(covariance, tau1sq, active_mask)
+
+    def fail_if_phi_gig_runs(*args: object, **kwargs: object) -> None:
+        raise AssertionError("fully screened columns must skip batched phi GIG")
+
+    monkeypatch.setattr(sbm_kernel, "_sample_gig_batch", fail_if_phi_gig_runs)
+    with jax.disable_jit():
+        result = sbm_sweep(
+            jax.random.key(97),
+            state,
+            scatter,
+            other_indices,
+            jnp.asarray(6),
+            jnp.asarray(0.5, dtype=dtype),
+            jnp.asarray(0.5, dtype=dtype),
+            jnp.asarray(1.0, dtype=dtype),
+            tau1sq,
+            active_mask,
+        )
+
+    off_diagonal = ~jnp.eye(4, dtype=jnp.bool_)
+    assert result.accepted
+    assert not jnp.array_equal(
+        jnp.diag(result.state.covariance),
+        jnp.diag(state.covariance),
+    )
+    assert jnp.all(result.state.covariance[off_diagonal] == 0.0)
+    assert jnp.all(result.state.precision[off_diagonal] == 0.0)
+    assert jnp.array_equal(result.state.phi, state.phi)
+    assert jnp.array_equal(result.state.psi, state.psi)
+    assert jnp.array_equal(result.state.tau, state.tau)
+    assert jnp.allclose(
+        result.state.precision,
+        jnp.linalg.inv(result.state.covariance),
+        rtol=2e-6 if dtype_name == "float32" else 1e-12,
+        atol=2e-6 if dtype_name == "float32" else 1e-12,
+    )
+
+
 def test_sbm_sweep_handles_a_fully_screened_graph() -> None:
     dtype = jnp.float32
     covariance, _, scatter, _, _ = _column_case(dtype)
