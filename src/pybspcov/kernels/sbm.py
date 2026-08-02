@@ -274,6 +274,7 @@ def _update_sbm_local_scales(
     dtype: jnp.dtype,
 ) -> tuple[Array, Array, Array, Array]:
     """Update active local scales without executing a fully screened GIG batch."""
+
     def preserve_scales(_: None) -> tuple[Array, Array, Array, Array]:
         return current_phi, current_psi, current_tau, jnp.asarray(True)
 
@@ -561,23 +562,21 @@ def compact_sbm_sweep(
             gamma,
         )
 
-        phi_values, psi_values, tau_values, scales_accepted = (
-            _update_sbm_local_scales(
-                phi_key=phi_key,
-                psi_key=psi_key,
-                beta=compact_beta,
-                active=lane_mask,
-                active_count=jnp.sum(lane_mask, dtype=jnp.int32),
-                random_positions=active_positions,
-                padded_count=padded_count,
-                current_phi=current.phi[compact_indices, column],
-                current_psi=current.psi[compact_indices, column],
-                current_tau=current.tau[compact_indices, column],
-                a=a,
-                b=b,
-                tau1sq=tau1sq,
-                dtype=dtype,
-            )
+        phi_values, psi_values, tau_values, scales_accepted = _update_sbm_local_scales(
+            phi_key=phi_key,
+            psi_key=psi_key,
+            beta=compact_beta,
+            active=lane_mask,
+            active_count=jnp.sum(lane_mask, dtype=jnp.int32),
+            random_positions=active_positions,
+            padded_count=padded_count,
+            current_phi=current.phi[compact_indices, column],
+            current_psi=current.psi[compact_indices, column],
+            current_tau=current.tau[compact_indices, column],
+            a=a,
+            b=b,
+            tau1sq=tau1sq,
+            dtype=dtype,
         )
         active_lanes = (
             jnp.zeros((padded_count,), dtype=jnp.int32)
@@ -671,6 +670,66 @@ def sample_sbm_chain(
             diagonal_rate,
             tau1sq,
             active_mask,
+        )
+        return result.state, (
+            result.state.covariance,
+            result.state.phi,
+            result.accepted,
+        )
+
+    final_state, (covariance, phi, accepted) = jax.lax.scan(
+        sweep,
+        state,
+        sweep_keys,
+    )
+    return SBMChainResult(
+        final_state=final_state,
+        covariance=covariance[burnin:],
+        phi=phi[burnin:],
+        accepted=accepted,
+    )
+
+
+def sample_compact_sbm_chain(
+    key: Array,
+    state: BMState,
+    scatter: Array,
+    n_observations: Array,
+    a: Array,
+    b: Array,
+    diagonal_rate: Array,
+    tau1sq: Array,
+    structure: SBMCompactStructure,
+    *,
+    burnin: int,
+    n_samples: int,
+) -> SBMChainResult:
+    """Run sequential compact SBM sweeps and retain post-burn-in draws.
+
+    ``burnin`` and ``n_samples`` determine output shapes. When wrapping this
+    function in :func:`jax.jit`, declare both with
+    ``static_argnames=("burnin", "n_samples")``.
+    """
+    if burnin < 0:
+        raise ValueError("burnin must be non-negative")
+    if n_samples <= 0:
+        raise ValueError("n_samples must be positive")
+    sweep_keys = jax.random.split(key, burnin + n_samples)
+
+    def sweep(
+        current: BMState,
+        sweep_key: Array,
+    ) -> tuple[BMState, tuple[Array, Array, Array]]:
+        result = compact_sbm_sweep(
+            sweep_key,
+            current,
+            scatter,
+            n_observations,
+            a,
+            b,
+            diagonal_rate,
+            tau1sq,
+            structure,
         )
         return result.state, (
             result.state.covariance,

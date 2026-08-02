@@ -7,6 +7,7 @@ from jax.extend import core as jax_core
 
 from pybspcov import kernels
 from pybspcov.kernels import sbm
+from pybspcov.sampling.gig import GIGSample
 
 ACTIVE_MASK = jnp.asarray(
     [
@@ -81,6 +82,7 @@ def test_compact_sbm_public_api_exports_the_structure_and_conditionals() -> None
     assert kernels.prepare_sbm_compact_structure is sbm.prepare_sbm_compact_structure
     assert kernels.compact_sbm_column_parameters is sbm.compact_sbm_column_parameters
     assert kernels.compact_sbm_sweep is sbm.compact_sbm_sweep
+    assert kernels.sample_compact_sbm_chain is sbm.sample_compact_sbm_chain
 
 
 def test_prepare_sbm_compact_structure_maps_literal_active_lanes() -> None:
@@ -568,3 +570,189 @@ def test_compact_sbm_sweep_factors_only_compact_width() -> None:
     assert (2, 2) in factor_shapes
     assert (3, 3) not in factor_shapes
     assert ((3, 3), (3, 3)) not in matrix_products
+
+
+@pytest.mark.parametrize("dtype_name", ["float32", "float64"])
+def test_sample_compact_sbm_chain_matches_explicit_sweeps(dtype_name: str) -> None:
+    if dtype_name == "float64" and not jax.config.x64_enabled:
+        pytest.skip("float64 requires JAX_ENABLE_X64=1")
+    dtype = getattr(jnp, dtype_name)
+    covariance, _, scatter, _ = _column_case(dtype)
+    tau1sq = jnp.asarray(0.15, dtype=dtype)
+    state = sbm.initialize_sbm_state(covariance, tau1sq, ACTIVE_MASK)
+    structure = sbm.prepare_sbm_compact_structure(ACTIVE_MASK, OTHER_INDICES)
+    arguments = (
+        scatter,
+        jnp.asarray(6),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(1.0, dtype=dtype),
+        tau1sq,
+        structure,
+    )
+    key = jax.random.key(229)
+    expected_state = state
+    expected_covariance = []
+    expected_phi = []
+    expected_accepted = []
+    run_sweep = jax.jit(sbm.compact_sbm_sweep)
+    for sweep_key in jax.random.split(key, 5):
+        sweep = run_sweep(sweep_key, expected_state, *arguments)
+        expected_state = sweep.state
+        expected_covariance.append(expected_state.covariance)
+        expected_phi.append(expected_state.phi)
+        expected_accepted.append(sweep.accepted)
+
+    result = jax.jit(
+        sbm.sample_compact_sbm_chain,
+        static_argnames=("burnin", "n_samples"),
+    )(
+        key,
+        state,
+        *arguments,
+        burnin=2,
+        n_samples=3,
+    )
+
+    assert result.covariance.shape == (3, 4, 4)
+    assert result.phi.shape == (3, 4, 4)
+    assert result.accepted.shape == (5,)
+    assert jnp.array_equal(result.covariance, jnp.stack(expected_covariance[2:]))
+    assert jnp.array_equal(result.phi, jnp.stack(expected_phi[2:]))
+    assert jnp.array_equal(result.accepted, jnp.stack(expected_accepted))
+    for actual, expected in zip(result.final_state, expected_state, strict=True):
+        assert jnp.array_equal(actual, expected)
+
+
+def _compact_column_gamma_key(sweep_key: jax.Array, column: int) -> jax.Array:
+    current_key = sweep_key
+    gamma_key = sweep_key
+    for _ in range(column + 1):
+        current_key, gamma_key, _, _, _ = jax.random.split(current_key, 5)
+    return gamma_key
+
+
+def test_sample_compact_sbm_chain_self_transitions_then_continues_after_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dtype = jnp.float32
+    covariance, _, scatter, _ = _column_case(dtype)
+    tau1sq = jnp.asarray(0.15, dtype=dtype)
+    state = sbm.initialize_sbm_state(covariance, tau1sq, ACTIVE_MASK)
+    structure = sbm.prepare_sbm_compact_structure(ACTIVE_MASK, OTHER_INDICES)
+    key = jax.random.key(233)
+    arguments = (
+        scatter,
+        jnp.asarray(6),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(1.0, dtype=dtype),
+        tau1sq,
+        structure,
+    )
+    sweep_keys = jax.random.split(key, 3)
+    rejected_key_data = jax.random.key_data(
+        _compact_column_gamma_key(sweep_keys[1], column=1)
+    )
+
+    def reject_one_gamma(
+        draw_key: jax.Array,
+        lambda_: jax.Array,
+        chi: jax.Array,
+        psi: jax.Array,
+    ) -> GIGSample:
+        del lambda_, psi
+        accepted = ~jnp.all(jax.random.key_data(draw_key) == rejected_key_data)
+        return GIGSample(
+            value=jnp.ones_like(chi),
+            accepted=accepted,
+            iterations=jnp.asarray(1, dtype=jnp.int32),
+        )
+
+    def accept_phi(
+        draw_keys: jax.Array,
+        lambda_: jax.Array,
+        chi: jax.Array,
+        psi: jax.Array,
+    ) -> GIGSample:
+        del draw_keys, lambda_, psi
+        return GIGSample(
+            value=jnp.ones_like(chi),
+            accepted=jnp.ones_like(chi, dtype=jnp.bool_),
+            iterations=jnp.ones_like(chi, dtype=jnp.int32),
+        )
+
+    monkeypatch.setattr(sbm, "sample_gig", reject_one_gamma)
+    monkeypatch.setattr(sbm, "_sample_gig_batch", accept_phi)
+
+    def isolated_sweep(
+        sweep_key: jax.Array,
+        current_state: sbm.BMState,
+    ) -> sbm.BMSweepResult:
+        return sbm.compact_sbm_sweep(sweep_key, current_state, *arguments)
+
+    def isolated_chain(
+        chain_key: jax.Array,
+        initial_state: sbm.BMState,
+    ) -> sbm.SBMChainResult:
+        return sbm.sample_compact_sbm_chain(
+            chain_key,
+            initial_state,
+            *arguments,
+            burnin=0,
+            n_samples=3,
+        )
+
+    run_sweep = jax.jit(isolated_sweep)
+    first = run_sweep(sweep_keys[0], state)
+    rejected = run_sweep(sweep_keys[1], first.state)
+    expected_final = run_sweep(sweep_keys[2], rejected.state)
+
+    assert first.accepted
+    assert not rejected.accepted
+    assert expected_final.accepted
+
+    result = jax.jit(isolated_chain)(key, state)
+
+    assert jnp.array_equal(result.accepted, jnp.asarray([True, False, True]))
+    assert jnp.array_equal(result.covariance[1], result.covariance[0])
+    assert jnp.array_equal(result.phi[1], result.phi[0])
+    assert not jnp.array_equal(result.covariance[2], result.covariance[1])
+    for rejected_value, first_value in zip(rejected.state, first.state, strict=True):
+        assert jnp.array_equal(rejected_value, first_value)
+    for actual, expected in zip(result.final_state, expected_final.state, strict=True):
+        assert jnp.array_equal(actual, expected)
+
+
+@pytest.mark.parametrize(
+    ("burnin", "n_samples", "message"),
+    [
+        (-1, 1, "burnin must be non-negative"),
+        (0, 0, "n_samples must be positive"),
+    ],
+)
+def test_sample_compact_sbm_chain_validates_static_lengths(
+    burnin: int,
+    n_samples: int,
+    message: str,
+) -> None:
+    dtype = jnp.float32
+    covariance, _, scatter, _ = _column_case(dtype)
+    tau1sq = jnp.asarray(0.15, dtype=dtype)
+    state = sbm.initialize_sbm_state(covariance, tau1sq, ACTIVE_MASK)
+    structure = sbm.prepare_sbm_compact_structure(ACTIVE_MASK, OTHER_INDICES)
+
+    with pytest.raises(ValueError, match=message):
+        sbm.sample_compact_sbm_chain(
+            jax.random.key(239),
+            state,
+            scatter,
+            jnp.asarray(6),
+            jnp.asarray(0.5, dtype=dtype),
+            jnp.asarray(0.5, dtype=dtype),
+            jnp.asarray(1.0, dtype=dtype),
+            tau1sq,
+            structure,
+            burnin=burnin,
+            n_samples=n_samples,
+        )
