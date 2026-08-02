@@ -344,3 +344,57 @@ def sample_bm_chain(
         phi=phi[burnin:],
         accepted=accepted,
     )
+
+
+def sample_bm_chains(
+    keys: Array,
+    states: BMState,
+    scatter: Array,
+    other_indices: Array,
+    n_observations: Array,
+    a: Array,
+    b: Array,
+    diagonal_rate: Array,
+    tau1sq: Array,
+    *,
+    burnin: int,
+    n_samples: int,
+) -> BMChainResult:
+    """Run independent BM chains with an explicit leading chain axis.
+
+    ``keys`` must be a one-dimensional batch of typed JAX keys, and every
+    ``states`` field must have shape ``(n_chains, p, p)``. The returned arrays
+    use the same leading chain axis. When wrapping this function in
+    :func:`jax.jit`, declare ``burnin`` and ``n_samples`` with
+    ``static_argnames=("burnin", "n_samples")``.
+    """
+    if keys.ndim != 1:
+        raise ValueError("keys must be a one-dimensional batch")
+    if not jnp.issubdtype(keys.dtype, jax.dtypes.prng_key):
+        raise TypeError("keys must contain typed JAX keys from jax.random.key")
+    chain_count = keys.shape[0]
+    if chain_count < 1:
+        raise ValueError("keys must contain at least one chain")
+    for field_name, value in zip(BMState._fields, states, strict=True):
+        if value.ndim != 3 or value.shape[0] != chain_count:
+            raise ValueError(
+                "state leading dimension must match keys; "
+                f"state.{field_name} has shape {value.shape}, expected "
+                f"({chain_count}, p, p)"
+            )
+
+    return jax.vmap(
+        lambda chain_key, chain_state: sample_bm_chain(
+            chain_key,
+            chain_state,
+            scatter,
+            other_indices,
+            n_observations,
+            a,
+            b,
+            diagonal_rate,
+            tau1sq,
+            burnin=burnin,
+            n_samples=n_samples,
+        )
+    )(keys, states)
