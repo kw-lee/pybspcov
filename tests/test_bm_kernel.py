@@ -1,8 +1,22 @@
+import ast
+import inspect
+
 import jax
 import jax.numpy as jnp
 import pytest
 
 from pybspcov.kernels.bm import bm_sweep, initialize_bm_state
+
+
+def test_bm_sweep_routes_phi_updates_through_batched_gig() -> None:
+    tree = ast.parse(inspect.getsource(bm_sweep))
+    called_names = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+
+    assert "_sample_gig_batch" in called_names
 
 
 @pytest.mark.parametrize("dtype_name", ["float32", "float64"])

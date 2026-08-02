@@ -6,8 +6,13 @@ from scipy.special import kv
 from pybspcov.sampling.gig import _sample_gig_batch, sample_gig
 
 
-@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
-def test_gig_batch_matches_scalar_draws_for_heterogeneous_parameters(dtype) -> None:
+@pytest.mark.parametrize("dtype_name", ["float32", "float64"])
+def test_gig_batch_matches_scalar_draws_for_heterogeneous_parameters(
+    dtype_name: str,
+) -> None:
+    if dtype_name == "float64" and not jax.config.x64_enabled:
+        pytest.skip("float64 requires JAX_ENABLE_X64=1")
+    dtype = getattr(jnp, dtype_name)
     keys = jax.random.split(jax.random.key(29), 4)
     lambda_ = jnp.asarray([-2.0, 0.0, 1.5, -0.25], dtype=dtype)
     chi = jnp.asarray([2.0, 0.01, 0.5, 0.04], dtype=dtype)
@@ -23,6 +28,8 @@ def test_gig_batch_matches_scalar_draws_for_heterogeneous_parameters(dtype) -> N
 
 
 def test_gig_batch_size_one_chunk_one_matches_scalar_exactly() -> None:
+    if not jax.config.x64_enabled:
+        pytest.skip("float64 requires JAX_ENABLE_X64=1")
     key = jax.random.key(31)
     keys = jax.random.split(key, 1)
     lambda_ = jnp.asarray([-2.0], dtype=jnp.float64)
@@ -41,6 +48,43 @@ def test_gig_batch_size_one_chunk_one_matches_scalar_exactly() -> None:
     assert batched.value[0] == scalar.value
     assert batched.accepted[0] == scalar.accepted
     assert batched.iterations[0] == scalar.iterations
+
+
+@pytest.mark.parametrize("proposal_chunk_size", [2, 4])
+def test_gig_batch_chunked_proposals_match_single_proposal_loop(
+    proposal_chunk_size: int,
+) -> None:
+    keys = jax.random.split(jax.random.key(33), 4)
+    lambda_ = jnp.asarray([-2.0, 0.0, 1.5, -0.25], dtype=jnp.float32)
+    chi = jnp.asarray([2.0, 0.01, 0.5, 0.04], dtype=jnp.float32)
+    psi = jnp.asarray([1.0, 1.0, 3.0, 0.5], dtype=jnp.float32)
+
+    single = _sample_gig_batch(keys, lambda_, chi, psi, proposal_chunk_size=1)
+    chunked = _sample_gig_batch(
+        keys,
+        lambda_,
+        chi,
+        psi,
+        proposal_chunk_size=proposal_chunk_size,
+    )
+
+    assert jnp.array_equal(chunked.accepted, single.accepted)
+    assert jnp.array_equal(chunked.iterations, single.iterations)
+    assert jnp.allclose(chunked.value, single.value, rtol=0.0, atol=0.0)
+
+
+def test_gig_batch_chunked_proposals_respect_iteration_bound() -> None:
+    keys = jax.random.split(jax.random.key(35), 4)
+    draws = _sample_gig_batch(
+        keys,
+        jnp.asarray([-2.0, 0.0, 1.5, -0.25]),
+        jnp.asarray([2.0, 0.01, 0.5, 0.04]),
+        jnp.asarray([1.0, 1.0, 3.0, 0.5]),
+        max_iterations=1,
+        proposal_chunk_size=4,
+    )
+
+    assert jnp.all(draws.iterations <= 1)
 
 
 def test_gig_batch_reports_invalid_and_exhausted_lanes_independently() -> None:
