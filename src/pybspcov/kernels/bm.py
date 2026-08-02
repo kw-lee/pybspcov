@@ -7,7 +7,7 @@ import jax.numpy as jnp
 from jax import Array
 
 from pybspcov.kernels.covariance import update_covariance_column
-from pybspcov.sampling.gig import sample_gig
+from pybspcov.sampling.gig import _sample_gig_batch, sample_gig
 
 
 class BMState(NamedTuple):
@@ -238,14 +238,12 @@ def bm_sweep(
         )
         phi_keys = jax.random.split(phi_key, active_count)
         phi_chi = jnp.maximum(jnp.square(beta) / tau1sq, 1e-6)
-        phi_draws = jax.vmap(
-            lambda draw_key, draw_chi, draw_psi: sample_gig(
-                draw_key,
-                a - 0.5,
-                draw_chi,
-                2.0 * draw_psi,
-            )
-        )(phi_keys, phi_chi, current.psi[indices, column])
+        phi_draws = _sample_gig_batch(
+            phi_keys,
+            a - 0.5,
+            phi_chi,
+            2.0 * current.psi[indices, column],
+        )
         phi_values = jnp.where(
             phi_draws.accepted,
             phi_draws.value,
