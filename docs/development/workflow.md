@@ -55,7 +55,7 @@ git pull --ff-only
 git worktree add .worktrees/gig-sampler -b feat/gig-sampler main
 cd .worktrees/gig-sampler
 uv sync --all-groups --all-extras
-uv run pytest -q
+JAX_ENABLE_X64=1 JAX_PLATFORMS=cpu uv run pytest -q
 ```
 
 If the baseline fails, stop and report the failure before changing code. Each

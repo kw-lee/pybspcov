@@ -19,7 +19,7 @@ repos:
         types: [python]
       - id: pytest
         name: pytest
-        entry: uv run pytest -q
+        entry: env JAX_ENABLE_X64=1 JAX_PLATFORMS=cpu uv run pytest -q
         language: system
         pass_filenames: false
         stages: [pre-push]
