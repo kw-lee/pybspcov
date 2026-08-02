@@ -263,6 +263,8 @@ def _update_sbm_local_scales(
     beta: Array,
     active: Array,
     active_count: Array,
+    random_positions: Array,
+    padded_count: int,
     current_phi: Array,
     current_psi: Array,
     current_tau: Array,
@@ -272,13 +274,11 @@ def _update_sbm_local_scales(
     dtype: jnp.dtype,
 ) -> tuple[Array, Array, Array, Array]:
     """Update active local scales without executing a fully screened GIG batch."""
-    padded_count = active.shape[0]
-
     def preserve_scales(_: None) -> tuple[Array, Array, Array, Array]:
         return current_phi, current_psi, current_tau, jnp.asarray(True)
 
     def sample_active_scales(_: None) -> tuple[Array, Array, Array, Array]:
-        phi_keys = jax.random.split(phi_key, padded_count)
+        phi_keys = jax.random.split(phi_key, padded_count)[random_positions]
         phi_chi = jnp.where(
             active,
             jnp.maximum(jnp.square(beta) / tau1sq, 1e-6),
@@ -297,7 +297,7 @@ def _update_sbm_local_scales(
             a + b,
             shape=(padded_count,),
             dtype=dtype,
-        )
+        )[random_positions]
         psi_values = jnp.where(
             phi_accepted,
             psi_draws / (phi_values + 1.0),
@@ -307,7 +307,7 @@ def _update_sbm_local_scales(
         accepted = jnp.all((~active) | phi_draws.accepted)
         return phi_values, psi_values, tau_values, accepted
 
-    if padded_count == 0:
+    if active.shape[0] == 0:
         return preserve_scales(None)
     result: tuple[Array, Array, Array, Array] = jax.lax.cond(
         active_count == 0,
@@ -416,6 +416,8 @@ def sbm_sweep(
             beta=beta,
             active=moments.active,
             active_count=moments.active_count,
+            random_positions=jnp.arange(padded_count, dtype=jnp.int32),
+            padded_count=padded_count,
             current_phi=current.phi[indices, column],
             current_psi=current.psi[indices, column],
             current_tau=current.tau[indices, column],
@@ -431,6 +433,176 @@ def sbm_sweep(
         psi = psi.at[column, indices].set(psi_values)
         tau = current.tau.at[indices, column].set(tau_values)
         tau = tau.at[column, indices].set(tau_values)
+        updated = BMState(covariance, precision, phi, psi, tau)
+        finite = jnp.logical_and.reduce(
+            jnp.stack([jnp.all(jnp.isfinite(value)) for value in updated])
+        )
+        accepted = sweep_accepted & gamma_draw.accepted & scales_accepted & finite
+        return updated, current_key, accepted
+
+    updated, _, accepted = jax.lax.fori_loop(
+        0,
+        dimension,
+        update_column,
+        (state, key, jnp.asarray(True)),
+    )
+    committed = jax.lax.cond(
+        accepted,
+        lambda _: updated,
+        lambda _: state,
+        operand=None,
+    )
+    return BMSweepResult(state=committed, accepted=accepted)
+
+
+def compact_sbm_sweep(
+    key: Array,
+    state: BMState,
+    scatter: Array,
+    n_observations: Array,
+    a: Array,
+    b: Array,
+    diagonal_rate: Array,
+    tau1sq: Array,
+    structure: SBMCompactStructure,
+) -> BMSweepResult:
+    """Run one SBM sweep using structure-owned compact active lanes."""
+    dimension = scatter.shape[0]
+    padded_count = dimension - 1
+    dtype = state.covariance.dtype
+
+    def update_column(
+        column: int,
+        carry: tuple[BMState, Array, Array],
+    ) -> tuple[BMState, Array, Array]:
+        current, current_key, sweep_accepted = carry
+        current_key, gamma_key, beta_key, phi_key, psi_key = jax.random.split(
+            current_key, 5
+        )
+        column_array = jnp.asarray(column)
+        indices = structure.other_indices[column]
+        active_positions = structure.active_positions[column]
+        lane_mask = structure.lane_mask[column]
+        compact_indices = indices[active_positions]
+
+        precision_block = current.precision[jnp.ix_(indices, indices)]
+        precision_cross = current.precision[indices, column]
+        conditional_precision = (
+            precision_block
+            - jnp.outer(precision_cross, precision_cross)
+            / current.precision[column, column]
+        )
+        reduced_rows = jnp.where(
+            lane_mask[:, None],
+            conditional_precision[active_positions, :],
+            0.0,
+        )
+        scatter_block = scatter[jnp.ix_(indices, indices)]
+        scatter_cross = scatter[indices, column]
+        conditional_scatter = reduced_rows @ scatter_cross
+        quadratic = reduced_rows @ scatter_block @ reduced_rows.T
+        current_beta = jnp.where(
+            lane_mask,
+            current.covariance[compact_indices, column],
+            0.0,
+        )
+        gamma_chi = (
+            current_beta @ quadratic @ current_beta
+            - 2.0 * current_beta @ conditional_scatter
+            + scatter[column, column]
+        )
+        gamma_draw = sample_gig(
+            gamma_key,
+            1.0 - n_observations / 2.0,
+            jnp.maximum(gamma_chi, jnp.asarray(1e-12, dtype=dtype)),
+            diagonal_rate,
+        )
+        gamma = jnp.where(
+            gamma_draw.accepted,
+            gamma_draw.value,
+            jnp.asarray(1.0, dtype=dtype),
+        )
+
+        lane_outer = lane_mask[:, None] & lane_mask[None, :]
+        conditional_block = conditional_precision[
+            jnp.ix_(active_positions, active_positions)
+        ]
+        unmasked_beta_precision = (
+            quadratic / gamma
+            + jnp.diag(1.0 / current.tau[compact_indices, column])
+            + diagonal_rate * conditional_block
+        )
+        beta_precision = jnp.where(lane_outer, unmasked_beta_precision, 0.0)
+        beta_precision = beta_precision + jnp.diag((~lane_mask).astype(dtype))
+        beta_precision = 0.5 * (beta_precision + beta_precision.T)
+        beta_mean = jnp.linalg.solve(beta_precision, conditional_scatter) / gamma
+        beta_cholesky = jnp.linalg.cholesky(beta_precision)
+        dense_beta_noise = jax.random.normal(
+            beta_key,
+            (padded_count,),
+            dtype=dtype,
+        )
+        beta_noise = jnp.linalg.solve(
+            beta_cholesky.T,
+            dense_beta_noise[active_positions],
+        )
+        compact_beta = jnp.where(lane_mask, beta_mean + beta_noise, 0.0)
+        beta = (
+            jnp.zeros((padded_count,), dtype=dtype)
+            .at[active_positions]
+            .add(compact_beta)
+        )
+        covariance, precision = update_covariance_column(
+            current.covariance,
+            current.precision,
+            column_array,
+            indices,
+            beta,
+            gamma,
+        )
+
+        phi_values, psi_values, tau_values, scales_accepted = (
+            _update_sbm_local_scales(
+                phi_key=phi_key,
+                psi_key=psi_key,
+                beta=compact_beta,
+                active=lane_mask,
+                active_count=jnp.sum(lane_mask, dtype=jnp.int32),
+                random_positions=active_positions,
+                padded_count=padded_count,
+                current_phi=current.phi[compact_indices, column],
+                current_psi=current.psi[compact_indices, column],
+                current_tau=current.tau[compact_indices, column],
+                a=a,
+                b=b,
+                tau1sq=tau1sq,
+                dtype=dtype,
+            )
+        )
+        active_lanes = (
+            jnp.zeros((padded_count,), dtype=jnp.int32)
+            .at[active_positions]
+            .add(lane_mask.astype(jnp.int32))
+            > 0
+        )
+
+        def expand(values: Array, fallback: Array) -> Array:
+            updates = (
+                jnp.zeros_like(fallback)
+                .at[active_positions]
+                .add(jnp.where(lane_mask, values, 0.0))
+            )
+            return jnp.where(active_lanes, updates, fallback)
+
+        phi_values_dense = expand(phi_values, current.phi[indices, column])
+        psi_values_dense = expand(psi_values, current.psi[indices, column])
+        tau_values_dense = expand(tau_values, current.tau[indices, column])
+        phi = current.phi.at[indices, column].set(phi_values_dense)
+        phi = phi.at[column, indices].set(phi_values_dense)
+        psi = current.psi.at[indices, column].set(psi_values_dense)
+        psi = psi.at[column, indices].set(psi_values_dense)
+        tau = current.tau.at[indices, column].set(tau_values_dense)
+        tau = tau.at[column, indices].set(tau_values_dense)
         updated = BMState(covariance, precision, phi, psi, tau)
         finite = jnp.logical_and.reduce(
             jnp.stack([jnp.all(jnp.isfinite(value)) for value in updated])

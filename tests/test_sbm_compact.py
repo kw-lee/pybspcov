@@ -80,6 +80,7 @@ def test_compact_sbm_public_api_exports_the_structure_and_conditionals() -> None
     assert kernels.SBMCompactColumnParameters is sbm.SBMCompactColumnParameters
     assert kernels.prepare_sbm_compact_structure is sbm.prepare_sbm_compact_structure
     assert kernels.compact_sbm_column_parameters is sbm.compact_sbm_column_parameters
+    assert kernels.compact_sbm_sweep is sbm.compact_sbm_sweep
 
 
 def test_prepare_sbm_compact_structure_maps_literal_active_lanes() -> None:
@@ -350,6 +351,195 @@ def test_compact_sbm_conditionals_factor_and_form_quadratic_at_compact_width() -
     closed = jax.make_jaxpr(
         lambda: _compact_parameters(dtype=dtype, column=1, structure=structure)
     )()
+    pending = [closed.jaxpr]
+    factor_shapes: list[tuple[int, ...]] = []
+    matrix_products: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
+    while pending:
+        current = pending.pop()
+        for equation in current.eqns:
+            if equation.primitive.name in {"cholesky", "lu", "triangular_solve"}:
+                factor_shapes.extend(
+                    variable.aval.shape
+                    for variable in equation.invars
+                    if hasattr(variable.aval, "shape") and len(variable.aval.shape) == 2
+                )
+            if equation.primitive.name == "dot_general":
+                operand_shapes = [
+                    variable.aval.shape
+                    for variable in equation.invars[:2]
+                    if hasattr(variable.aval, "shape")
+                ]
+                if len(operand_shapes) == 2 and all(
+                    len(shape) == 2 for shape in operand_shapes
+                ):
+                    matrix_products.append((operand_shapes[0], operand_shapes[1]))
+            for parameter in equation.params.values():
+                pending.extend(_nested_jaxprs(parameter))
+
+    assert (2, 2) in factor_shapes
+    assert (3, 3) not in factor_shapes
+    assert ((3, 3), (3, 3)) not in matrix_products
+
+
+@pytest.mark.parametrize("dtype_name", ["float32", "float64"])
+@pytest.mark.parametrize("mask_name", ["partial", "full"])
+def test_compact_sbm_sweep_matches_successful_masked_dense_fixed_key(
+    dtype_name: str,
+    mask_name: str,
+) -> None:
+    if dtype_name == "float64" and not jax.config.x64_enabled:
+        pytest.skip("float64 requires JAX_ENABLE_X64=1")
+    dtype = getattr(jnp, dtype_name)
+    tolerance = 4e-5 if dtype_name == "float32" else 2e-10
+    covariance, _, scatter, _ = _column_case(dtype)
+    active_mask = (
+        ACTIVE_MASK if mask_name == "partial" else ~jnp.eye(4, dtype=jnp.bool_)
+    )
+    tau1sq = jnp.asarray(0.15, dtype=dtype)
+    state = sbm.initialize_sbm_state(covariance, tau1sq, active_mask)
+    structure = sbm.prepare_sbm_compact_structure(active_mask, OTHER_INDICES)
+    shared = (
+        scatter,
+        jnp.asarray(6),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(1.0, dtype=dtype),
+        tau1sq,
+    )
+    key = jax.random.key(211)
+
+    masked = jax.jit(sbm.sbm_sweep)(
+        key, state, scatter, OTHER_INDICES, *shared[1:], active_mask
+    )
+    compact = jax.jit(sbm.compact_sbm_sweep)(key, state, *shared, structure)
+
+    assert masked.accepted
+    assert compact.accepted
+    for actual, expected in zip(compact.state, masked.state, strict=True):
+        assert jnp.allclose(actual, expected, rtol=tolerance, atol=tolerance)
+    excluded = (~active_mask) & (~jnp.eye(4, dtype=jnp.bool_))
+    assert jnp.all(compact.state.covariance[excluded] == 0.0)
+    assert jnp.all(jnp.linalg.eigvalsh(compact.state.covariance) > 0.0)
+    assert jnp.allclose(
+        compact.state.precision,
+        jnp.linalg.inv(compact.state.covariance),
+        rtol=tolerance,
+        atol=tolerance,
+    )
+
+
+def test_compact_sbm_sweep_uses_structure_owned_other_indices() -> None:
+    dtype = jnp.float32
+    covariance, _, scatter, _ = _column_case(dtype)
+    tau1sq = jnp.asarray(0.15, dtype=dtype)
+    state = sbm.initialize_sbm_state(covariance, tau1sq, ACTIVE_MASK)
+    reversed_indices = OTHER_INDICES[:, ::-1]
+    structure = sbm.prepare_sbm_compact_structure(ACTIVE_MASK, reversed_indices)
+    key = jax.random.key(211)
+
+    masked = jax.jit(sbm.sbm_sweep)(
+        key,
+        state,
+        scatter,
+        reversed_indices,
+        jnp.asarray(6),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(1.0, dtype=dtype),
+        tau1sq,
+        ACTIVE_MASK,
+    )
+    compact = jax.jit(sbm.compact_sbm_sweep)(
+        key,
+        state,
+        scatter,
+        jnp.asarray(6),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(1.0, dtype=dtype),
+        tau1sq,
+        structure,
+    )
+
+    assert masked.accepted
+    assert compact.accepted
+    for actual, expected in zip(compact.state, masked.state, strict=True):
+        assert jnp.allclose(actual, expected, rtol=4e-5, atol=4e-5)
+
+
+@pytest.mark.parametrize("compiled", [False, True])
+def test_compact_sbm_sweep_zero_width_skips_phi_gig_and_preserves_scales(
+    compiled: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dtype = jnp.float32
+    covariance, _, scatter, _ = _column_case(dtype)
+    active_mask = jnp.zeros((4, 4), dtype=jnp.bool_)
+    tau1sq = jnp.asarray(0.15, dtype=dtype)
+    state = sbm.initialize_sbm_state(covariance, tau1sq, active_mask)
+    scale_pattern = jnp.asarray(
+        [
+            [0.0, 0.1, 0.2, 0.3],
+            [0.1, 0.0, 0.4, 0.5],
+            [0.2, 0.4, 0.0, 0.6],
+            [0.3, 0.5, 0.6, 0.0],
+        ],
+        dtype=dtype,
+    )
+    state = state._replace(
+        phi=jnp.asarray(1.5, dtype=dtype) + scale_pattern,
+        psi=jnp.asarray(2.5, dtype=dtype) + scale_pattern,
+        tau=jnp.asarray(0.25, dtype=dtype) + scale_pattern,
+    )
+    structure = sbm.prepare_sbm_compact_structure(active_mask, OTHER_INDICES)
+
+    def fail_if_phi_gig_runs(*args: object, **kwargs: object) -> None:
+        raise AssertionError("zero-width compact sweep must skip phi GIG")
+
+    monkeypatch.setattr(sbm, "_sample_gig_batch", fail_if_phi_gig_runs)
+
+    def run() -> object:
+        return sbm.compact_sbm_sweep(
+            jax.random.key(223),
+            state,
+            scatter,
+            jnp.asarray(6),
+            jnp.asarray(0.5, dtype=dtype),
+            jnp.asarray(0.5, dtype=dtype),
+            jnp.asarray(1.0, dtype=dtype),
+            tau1sq,
+            structure,
+        )
+
+    if compiled:
+        result = jax.jit(run)()
+    else:
+        with jax.disable_jit():
+            result = run()
+
+    assert result.accepted
+    assert jnp.array_equal(result.state.phi, state.phi)
+    assert jnp.array_equal(result.state.psi, state.psi)
+    assert jnp.array_equal(result.state.tau, state.tau)
+
+
+def test_compact_sbm_sweep_factors_only_compact_width() -> None:
+    dtype = jnp.float32
+    covariance, _, scatter, _ = _column_case(dtype)
+    tau1sq = jnp.asarray(0.15, dtype=dtype)
+    state = sbm.initialize_sbm_state(covariance, tau1sq, ACTIVE_MASK)
+    structure = sbm.prepare_sbm_compact_structure(ACTIVE_MASK, OTHER_INDICES)
+    closed = jax.make_jaxpr(sbm.compact_sbm_sweep)(
+        jax.random.key(227),
+        state,
+        scatter,
+        jnp.asarray(6),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(1.0, dtype=dtype),
+        tau1sq,
+        structure,
+    )
     pending = [closed.jaxpr]
     factor_shapes: list[tuple[int, ...]] = []
     matrix_products: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
