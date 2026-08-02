@@ -5,16 +5,15 @@
 estimation.
 
 > [!IMPORTANT]
-> This development repository contains the initial `BMSPCov` estimator.
-> `SBMSPCov` and a published package release are not yet available.
+> This development repository contains the initial `BMSPCov` and `SBMSPCov`
+> estimators. A published package release is not yet available.
 
 Repository: <https://github.com/kw-lee/pybspcov>
 
 ## Initial scope
 
-The package provides `BMSPCov`, based on the beta-mixture shrinkage prior.
-`SBMSPCov`, based on the screened beta-mixture shrinkage prior, remains the next
-estimator milestone.
+The package provides `BMSPCov`, based on the beta-mixture shrinkage prior, and
+`SBMSPCov`, based on the screened beta-mixture shrinkage prior.
 
 The implementation uses JAX and XLA for CPU and NVIDIA GPU execution. The package
 itself will not contain custom C, C++, or CUDA extensions. It will evaluate masked
