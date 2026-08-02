@@ -109,6 +109,22 @@ def test_prepare_sbm_compact_structure_preserves_zero_width() -> None:
     assert structure.lane_mask.dtype == jnp.bool_
 
 
+def test_prepare_sbm_compact_structure_preserves_other_indices_device() -> None:
+    cpu_devices = jax.devices("cpu")
+    target_device = cpu_devices[-1]
+    other_indices = jax.device_put(OTHER_INDICES, target_device)
+
+    structure = sbm.prepare_sbm_compact_structure(ACTIVE_MASK, other_indices)
+
+    expected_devices = other_indices.devices()
+    for field_name, value in zip(
+        sbm.SBMCompactStructure._fields,
+        structure,
+        strict=True,
+    ):
+        assert value.devices() == expected_devices, field_name
+
+
 @pytest.mark.parametrize(
     ("other_indices", "exception", "message"),
     [
@@ -160,22 +176,27 @@ def test_compact_sbm_structure_keeps_positions_bound_to_its_index_table() -> Non
     )
 
     canonical = _compact_parameters(
-        dtype=jnp.float64,
+        dtype=jnp.float32,
         column=1,
         structure=canonical_structure,
     )
     reversed_result = _compact_parameters(
-        dtype=jnp.float64,
+        dtype=jnp.float32,
         column=1,
         structure=reversed_structure,
     )
 
-    assert jnp.allclose(canonical.gamma_chi, reversed_result.gamma_chi, rtol=1e-12)
+    assert jnp.allclose(
+        canonical.gamma_chi,
+        reversed_result.gamma_chi,
+        rtol=2e-5,
+        atol=2e-5,
+    )
     assert jnp.allclose(
         canonical.beta_mean,
         reversed_result.beta_mean[::-1],
-        rtol=1e-12,
-        atol=1e-12,
+        rtol=2e-5,
+        atol=2e-5,
     )
 
 

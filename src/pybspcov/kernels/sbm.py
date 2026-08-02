@@ -585,8 +585,9 @@ def prepare_sbm_compact_structure(
     for column, positions in enumerate(column_positions):
         active_positions[column, : positions.size] = positions
         lane_mask[column, : positions.size] = True
+    target_device = next(iter(indices.devices()))
     return SBMCompactStructure(
         other_indices=indices,
-        active_positions=jnp.asarray(active_positions),
-        lane_mask=jnp.asarray(lane_mask),
+        active_positions=jax.device_put(active_positions, target_device),
+        lane_mask=jax.device_put(lane_mask, target_device),
     )
