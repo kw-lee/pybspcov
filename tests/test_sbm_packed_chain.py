@@ -180,6 +180,52 @@ def test_compact_sbm_packed_chain_supports_zero_width_structure() -> None:
     assert jnp.array_equal(packed.accepted, full.accepted)
 
 
+def test_compact_sbm_packed_chain_retains_r_gamma_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dtype = jnp.float32
+    active_mask = jnp.zeros((3, 3), dtype=jnp.bool_)
+    state, arguments = _compact_chain_case(dtype, active_mask=active_mask)
+    proposed_gamma = jnp.asarray(5e-7, dtype=dtype)
+
+    def accepted_gamma(*_: object) -> GIGSample:
+        return GIGSample(
+            value=proposed_gamma,
+            accepted=jnp.asarray(True),
+            iterations=jnp.asarray(1, dtype=jnp.int32),
+        )
+
+    monkeypatch.setattr(sbm, "sample_gig", accepted_gamma)
+    key = jax.random.key(318)
+
+    packed = sbm.sample_compact_sbm_packed_chain(
+        key,
+        state,
+        *arguments,
+        burnin=1,
+        n_samples=2,
+    )
+    full = sbm.sample_compact_sbm_chain(
+        key,
+        state,
+        *arguments,
+        burnin=1,
+        n_samples=2,
+    )
+
+    reconstructed = unpack_lower_triangle_column_major(
+        packed.covariance,
+        dimension=3,
+    )
+    expected_covariance = jnp.broadcast_to(
+        jnp.eye(3, dtype=dtype) * jnp.asarray(1e-6, dtype=dtype),
+        (2, 3, 3),
+    )
+    assert jnp.array_equal(reconstructed, expected_covariance)
+    assert jnp.array_equal(reconstructed, full.covariance)
+    assert jnp.array_equal(packed.accepted, full.accepted)
+
+
 def test_compact_sbm_packed_chain_preserves_state_on_rejection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -193,7 +239,7 @@ def test_compact_sbm_packed_chain_preserves_state_on_rejection(
     ) -> GIGSample:
         del key, lambda_, psi
         return GIGSample(
-            value=jnp.ones_like(chi),
+            value=jnp.full_like(chi, 5e-7),
             accepted=jnp.asarray(False),
             iterations=jnp.asarray(1, dtype=jnp.int32),
         )

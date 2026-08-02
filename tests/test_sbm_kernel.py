@@ -429,43 +429,69 @@ def test_sbm_sweep_handles_a_fully_screened_graph() -> None:
     )
 
 
-def test_sbm_sweep_propagates_accepted_sub_micro_gamma_unchanged(
+@pytest.mark.parametrize("dtype_name", ["float32", "float64"])
+@pytest.mark.parametrize(
+    ("proposal", "expected"),
+    [(5e-7, 1e-6), (1e-6, 1e-6), (2e-6, 2e-6)],
+)
+def test_sbm_sweeps_floor_only_accepted_gamma_like_r(
     monkeypatch: pytest.MonkeyPatch,
+    dtype_name: str,
+    proposal: float,
+    expected: float,
 ) -> None:
-    dtype = jnp.float32
-    tiny_gamma = jnp.asarray(5e-7, dtype=dtype)
+    if dtype_name == "float64" and not jax.config.x64_enabled:
+        pytest.skip("float64 requires JAX_ENABLE_X64=1")
+    dtype = getattr(jnp, dtype_name)
+    proposed_gamma = jnp.asarray(proposal, dtype=dtype)
 
-    def accepted_tiny_gamma(*_: object) -> GIGSample:
+    def accepted_gamma(*_: object) -> GIGSample:
         return GIGSample(
-            value=tiny_gamma,
+            value=proposed_gamma,
             accepted=jnp.asarray(True),
             iterations=jnp.asarray(1, dtype=jnp.int32),
         )
 
-    monkeypatch.setattr(sbm_kernel, "sample_gig", accepted_tiny_gamma)
+    monkeypatch.setattr(sbm_kernel, "sample_gig", accepted_gamma)
     covariance = jnp.eye(2, dtype=dtype)
     active_mask = jnp.zeros((2, 2), dtype=jnp.bool_)
     tau1sq = jnp.asarray(0.15, dtype=dtype)
     state = initialize_sbm_state(covariance, tau1sq, active_mask)
-
-    result = sbm_sweep(
-        jax.random.key(103),
-        state,
+    other_indices = jnp.asarray([[1], [0]], dtype=jnp.int32)
+    shared = (
         covariance,
-        jnp.asarray([[1], [0]], dtype=jnp.int32),
         jnp.asarray(6),
         jnp.asarray(0.5, dtype=dtype),
         jnp.asarray(0.5, dtype=dtype),
         jnp.asarray(1.0, dtype=dtype),
         tau1sq,
-        active_mask,
     )
 
-    assert result.accepted
-    assert jnp.array_equal(
-        jnp.diag(result.state.covariance),
-        jnp.full((2,), tiny_gamma, dtype=dtype),
+    masked = sbm_sweep(
+        jax.random.key(103),
+        state,
+        shared[0],
+        other_indices,
+        *shared[1:],
+        active_mask,
     )
+    compact = sbm_kernel.compact_sbm_sweep(
+        jax.random.key(103),
+        state,
+        *shared,
+        sbm_kernel.prepare_sbm_compact_structure(active_mask, other_indices),
+    )
+
+    expected_diagonal = jnp.full((2,), expected, dtype=dtype)
+    assert masked.accepted
+    assert compact.accepted
+    assert masked.state.covariance.dtype == dtype
+    assert compact.state.covariance.dtype == dtype
+    assert masked.state.covariance.device == state.covariance.device
+    assert compact.state.covariance.device == state.covariance.device
+    assert jnp.array_equal(jnp.diag(masked.state.covariance), expected_diagonal)
+    for compact_value, masked_value in zip(compact.state, masked.state, strict=True):
+        assert jnp.array_equal(compact_value, masked_value)
 
 
 def test_sbm_sweep_rolls_back_all_state_when_gamma_draw_is_rejected(
@@ -481,7 +507,7 @@ def test_sbm_sweep_rolls_back_all_state_when_gamma_draw_is_rejected(
     ) -> GIGSample:
         del key, lambda_, psi
         return GIGSample(
-            value=jnp.ones_like(chi),
+            value=jnp.full_like(chi, 5e-7),
             accepted=jnp.asarray(False),
             iterations=jnp.asarray(1, dtype=jnp.int32),
         )
