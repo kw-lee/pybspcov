@@ -1,46 +1,40 @@
 # pybspcov
 
-`pybspcov` is a planned pure-Python, JAX-accelerated port of the R package
+`pybspcov` is a pure-Python, JAX-accelerated port of the R package
 [`bspcov`](https://github.com/statjs/bspcov) for Bayesian sparse covariance
 estimation.
 
 > [!IMPORTANT]
-> This repository is in its bootstrap phase. It does not yet contain an
-> installable estimator implementation or a published package release.
+> This development repository contains the initial `BMSPCov` estimator.
+> `SBMSPCov` and a published package release are not yet available.
 
 Repository: <https://github.com/kw-lee/pybspcov>
 
 ## Initial scope
 
-The first functional milestone will provide class-based Python implementations
-of:
+The package provides `BMSPCov`, based on the beta-mixture shrinkage prior.
+`SBMSPCov`, based on the screened beta-mixture shrinkage prior, remains the next
+estimator milestone.
 
-- `BMSPCov`, based on the beta-mixture shrinkage prior; and
-- `SBMSPCov`, based on the screened beta-mixture shrinkage prior.
-
-The implementation will use JAX and XLA for CPU and NVIDIA GPU execution. The
+The implementation uses JAX and XLA for CPU and NVIDIA GPU execution. The
 package itself will not contain custom C, C++, or CUDA extensions. It will use
 64-bit floating point arithmetic by default and evaluate masked dense and sparse
 GPU strategies with reproducible benchmarks.
 
-The intended public API is:
+The current `BMSPCov` API is:
 
 ```python
 import jax
 from pybspcov import BMSPCov
 
-model = BMSPCov(n_samples=2_000, n_chains=4)
-model.fit(X, key=jax.random.key(42))
+model = BMSPCov(n_samples=2_000, n_chains=4, dtype="float32")
+model.fit(X_centered, key=jax.random.key(42))
 posterior_mean = model.covariance_
 ```
 
-This example documents the approved target API and is not executable in the
-bootstrap commit.
-
 ## Development installation
 
-The repository scaffold can be installed for CPU development. Estimator
-implementations are not yet available.
+The development package can be installed with its CPU dependencies as follows.
 
 ```bash
 git clone https://github.com/kw-lee/pybspcov.git
