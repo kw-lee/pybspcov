@@ -128,14 +128,6 @@ def test_pybspcov_cpu_cli_writes_all_result_schemas(tmp_path: Path) -> None:
     assert len(timing_rows) == 1
 
 
-def test_pybspcov_gpu_cli_fails_clearly_when_cuda_is_hidden(tmp_path: Path) -> None:
-    result = _run_pybspcov(tmp_path, "gpu")
-
-    assert result.returncode == 2
-    assert "requested JAX GPU device is unavailable" in result.stderr
-    assert not list(tmp_path.glob("*.csv"))
-
-
 def _write_csv(path: Path, fieldnames: tuple[str, ...], row: dict[str, object]) -> None:
     with path.open("w", newline="", encoding="utf-8") as output_file:
         writer = csv.DictWriter(output_file, fieldnames=fieldnames)

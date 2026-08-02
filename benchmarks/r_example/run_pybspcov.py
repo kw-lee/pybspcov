@@ -233,7 +233,7 @@ def select_device(platform_name: str) -> jax.Device:
     """Select one requested JAX device or fail with an actionable message."""
     try:
         devices = jax.devices(platform_name)
-    except RuntimeError as error:
+    except (AssertionError, RuntimeError) as error:
         raise RuntimeError(
             f"requested JAX {platform_name.upper()} device is unavailable"
         ) from error
@@ -409,9 +409,10 @@ def _write_summary(path: Path, summary: dict[str, Any], truth: np.ndarray) -> No
 
 def main() -> None:
     arguments = _parse_args()
-    jax.config.update("jax_platforms", jax_platform_name(arguments.device))
+    platform_name = jax_platform_name(arguments.device)
+    jax.config.update("jax_platforms", platform_name)
     jax.config.update("jax_enable_x64", True)
-    device = select_device(arguments.device)
+    device = select_device(platform_name)
     end_to_end_start = time.perf_counter()
     fixture_directory = Path(__file__).resolve().parent / "data"
     x_numpy = _read_matrix(fixture_directory, "bm_example_x.csv")

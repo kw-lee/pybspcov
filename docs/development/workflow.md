@@ -74,6 +74,27 @@ Remove a worktree only after its changes are committed or intentionally
 discarded and its pull request is merged or closed. Do not use forced removal
 to hide an unclean tree.
 
+### Merged Branch Cleanup
+
+Audit branches and worktrees at the end of every integration wave and before
+creating another worktree. Fetch remote deletion state first, then remove only
+clean worktrees whose pull requests are merged or closed:
+
+```bash
+git fetch --prune origin
+git worktree list
+git branch --merged main
+git worktree remove .worktrees/gig-sampler
+git branch -d feat/gig-sampler
+git worktree prune
+```
+
+Delete the corresponding remote topic branch when the pull request is merged.
+Do not remove the base of an active stacked branch until its dependents have
+been rebased or retargeted to the updated `main`. Never use forced worktree or
+branch deletion as routine cleanup; investigate uncommitted or unmerged work
+instead.
+
 ## Parallel Work Rules
 
 Parallel work is allowed only when tasks have independent inputs, outputs, and

@@ -472,3 +472,25 @@ def test_cli_device_maps_to_registered_jax_platform(
     device: str, platform_name: str
 ) -> None:
     assert jax_platform_name(device) == platform_name
+
+
+@pytest.mark.parametrize(
+    "backend_error",
+    [RuntimeError("backend unavailable"), AssertionError("no default backend")],
+)
+def test_select_device_normalizes_backend_initialization_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    backend_error: Exception,
+) -> None:
+    requested_platforms: list[str] = []
+
+    def fail_to_initialize(platform_name: str) -> list[object]:
+        requested_platforms.append(platform_name)
+        raise backend_error
+
+    monkeypatch.setattr(benchmark_runner.jax, "devices", fail_to_initialize)
+
+    with pytest.raises(RuntimeError, match="requested JAX CUDA device is unavailable"):
+        benchmark_runner.select_device("cuda")
+
+    assert requested_platforms == ["cuda"]
