@@ -12,6 +12,7 @@ from pybspcov.kernels.bm import (
     BMSweepResult,
     _bm_column_moments,
     initialize_bm_state,
+    pack_lower_triangle_column_major,
 )
 from pybspcov.kernels.covariance import update_covariance_column
 from pybspcov.sampling.gig import _sample_gig_batch, sample_gig
@@ -633,6 +634,15 @@ class SBMChainResult(NamedTuple):
     accepted: Array
 
 
+class SBMPackedChainResult(NamedTuple):
+    """R-ordered lower-triangle compact SBM draws and final chain state."""
+
+    final_state: BMState
+    covariance: Array
+    phi: Array
+    accepted: Array
+
+
 def sample_sbm_chain(
     key: Array,
     state: BMState,
@@ -748,6 +758,131 @@ def sample_compact_sbm_chain(
         phi=phi[burnin:],
         accepted=accepted,
     )
+
+
+def sample_compact_sbm_packed_chain(
+    key: Array,
+    state: BMState,
+    scatter: Array,
+    n_observations: Array,
+    a: Array,
+    b: Array,
+    diagonal_rate: Array,
+    tau1sq: Array,
+    structure: SBMCompactStructure,
+    *,
+    burnin: int,
+    n_samples: int,
+) -> SBMPackedChainResult:
+    """Run one compact SBM chain while retaining packed posterior draws."""
+    if burnin < 0:
+        raise ValueError("burnin must be non-negative")
+    if n_samples <= 0:
+        raise ValueError("n_samples must be positive")
+    sweep_keys = jax.random.split(key, burnin + n_samples)
+
+    def advance(
+        current: BMState,
+        sweep_key: Array,
+    ) -> tuple[BMState, Array]:
+        result = compact_sbm_sweep(
+            sweep_key,
+            current,
+            scatter,
+            n_observations,
+            a,
+            b,
+            diagonal_rate,
+            tau1sq,
+            structure,
+        )
+        return result.state, result.accepted
+
+    posterior_initial_state, burnin_accepted = jax.lax.scan(
+        advance,
+        state,
+        sweep_keys[:burnin],
+    )
+
+    def retain(
+        current: BMState,
+        sweep_key: Array,
+    ) -> tuple[BMState, tuple[Array, Array, Array]]:
+        result = compact_sbm_sweep(
+            sweep_key,
+            current,
+            scatter,
+            n_observations,
+            a,
+            b,
+            diagonal_rate,
+            tau1sq,
+            structure,
+        )
+        return result.state, (
+            pack_lower_triangle_column_major(result.state.covariance),
+            pack_lower_triangle_column_major(result.state.phi),
+            result.accepted,
+        )
+
+    final_state, (covariance, phi, posterior_accepted) = jax.lax.scan(
+        retain,
+        posterior_initial_state,
+        sweep_keys[burnin:],
+    )
+    return SBMPackedChainResult(
+        final_state=final_state,
+        covariance=covariance,
+        phi=phi,
+        accepted=jnp.concatenate((burnin_accepted, posterior_accepted)),
+    )
+
+
+def sample_compact_sbm_packed_chains(
+    keys: Array,
+    states: BMState,
+    scatter: Array,
+    n_observations: Array,
+    a: Array,
+    b: Array,
+    diagonal_rate: Array,
+    tau1sq: Array,
+    structure: SBMCompactStructure,
+    *,
+    burnin: int,
+    n_samples: int,
+) -> SBMPackedChainResult:
+    """Run independent compact SBM chains with packed retained draws."""
+    if keys.ndim != 1:
+        raise ValueError("keys must be a one-dimensional batch")
+    if not jnp.issubdtype(keys.dtype, jax.dtypes.prng_key):
+        raise TypeError("keys must contain typed JAX keys from jax.random.key")
+    chain_count = keys.shape[0]
+    if chain_count < 1:
+        raise ValueError("keys must contain at least one chain")
+    for field_name, value in zip(BMState._fields, states, strict=True):
+        if value.ndim != 3 or value.shape[0] != chain_count:
+            raise ValueError(
+                "state leading dimension must match keys; "
+                f"state.{field_name} has shape {value.shape}, expected "
+                f"({chain_count}, p, p)"
+            )
+
+    return jax.vmap(
+        lambda chain_key, chain_state: sample_compact_sbm_packed_chain(
+            chain_key,
+            chain_state,
+            scatter,
+            n_observations,
+            a,
+            b,
+            diagonal_rate,
+            tau1sq,
+            structure,
+            burnin=burnin,
+            n_samples=n_samples,
+        )
+    )(keys, states)
 
 
 def validate_sbm_active_mask(
