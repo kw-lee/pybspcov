@@ -14,8 +14,50 @@ def test_gig_dispatches_rejection_regimes_with_cond() -> None:
         jnp.asarray(1.0),
     )
 
-    primitives = {equation.primitive.name for equation in jaxpr.jaxpr.eqns}
-    assert "cond" in primitives
+    top_level_equations = jaxpr.jaxpr.eqns
+    cond_equations = [
+        equation
+        for equation in top_level_equations
+        if equation.primitive.name == "cond"
+    ]
+    assert len(cond_equations) == 1
+    assert all(equation.primitive.name != "while" for equation in top_level_equations)
+
+    branches = cond_equations[0].params["branches"]
+    assert len(branches) == 2
+    for branch in branches:
+        branch_primitives = [equation.primitive.name for equation in branch.jaxpr.eqns]
+        assert branch_primitives.count("while") == 1
+
+
+@pytest.mark.parametrize(
+    ("lambda_value", "chi", "psi"),
+    [
+        pytest.param(-2.0, 2.0, 1.0, id="no-shift"),
+        pytest.param(0.0, 0.01, 1.0, id="small-omega"),
+    ],
+)
+def test_gig_zero_iteration_bound_exhausts_selected_regime(
+    lambda_value: float, chi: float, psi: float
+) -> None:
+    sample = jax.jit(
+        lambda key, lambda_, chi_, psi_: sample_gig(
+            key,
+            lambda_,
+            chi_,
+            psi_,
+            max_iterations=0,
+        )
+    )(
+        jax.random.key(19),
+        jnp.asarray(lambda_value),
+        jnp.asarray(chi),
+        jnp.asarray(psi),
+    )
+
+    assert not sample.accepted
+    assert jnp.isnan(sample.value)
+    assert sample.iterations == 0
 
 
 @pytest.mark.parametrize(
