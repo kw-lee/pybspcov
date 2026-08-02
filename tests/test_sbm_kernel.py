@@ -3,6 +3,7 @@ import jax.numpy as jnp
 import pytest
 
 from pybspcov import kernels
+from pybspcov.kernels import bm as bm_kernel
 from pybspcov.kernels import sbm as sbm_kernel
 from pybspcov.kernels.bm import bm_column_parameters, bm_sweep, initialize_bm_state
 from pybspcov.kernels.sbm import (
@@ -54,6 +55,54 @@ def _column_case(dtype: jnp.dtype) -> tuple[jax.Array, ...]:
         ]
     )
     return covariance, jnp.linalg.inv(covariance), x.T @ x, tau, active_mask
+
+
+def _sbm_rollback_case() -> tuple[sbm_kernel.BMState, tuple[jax.Array, ...]]:
+    dtype = jnp.float32
+    covariance, _, scatter, _, active_mask = _column_case(dtype)
+    tau1sq = jnp.asarray(0.15, dtype=dtype)
+    state = initialize_sbm_state(covariance, tau1sq, active_mask)
+    arguments = (
+        scatter,
+        jnp.asarray(
+            [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]],
+            dtype=jnp.int32,
+        ),
+        jnp.asarray(6),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(1.0, dtype=dtype),
+        tau1sq,
+        active_mask,
+    )
+    return state, arguments
+
+
+def _assert_state_array_equal(
+    actual: sbm_kernel.BMState,
+    expected: sbm_kernel.BMState,
+) -> None:
+    for field_name, actual_value, expected_value in zip(
+        sbm_kernel.BMState._fields,
+        actual,
+        expected,
+        strict=True,
+    ):
+        assert jnp.array_equal(actual_value, expected_value), field_name
+
+
+def _accepted_batch_gig(
+    keys: jax.Array,
+    lambda_: jax.Array,
+    chi: jax.Array,
+    psi: jax.Array,
+) -> GIGSample:
+    del keys, lambda_, psi
+    return GIGSample(
+        value=jnp.ones_like(chi),
+        accepted=jnp.ones_like(chi, dtype=jnp.bool_),
+        iterations=jnp.ones_like(chi, dtype=jnp.int32),
+    )
 
 
 def test_sbm_kernel_api_is_exported() -> None:
@@ -364,6 +413,157 @@ def test_sbm_sweep_propagates_accepted_sub_micro_gamma_unchanged(
         jnp.diag(result.state.covariance),
         jnp.full((2,), tiny_gamma, dtype=dtype),
     )
+
+
+def test_sbm_sweep_rolls_back_all_state_when_gamma_draw_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state, arguments = _sbm_rollback_case()
+
+    def reject_gamma(
+        key: jax.Array,
+        lambda_: jax.Array,
+        chi: jax.Array,
+        psi: jax.Array,
+    ) -> GIGSample:
+        del key, lambda_, psi
+        return GIGSample(
+            value=jnp.ones_like(chi),
+            accepted=jnp.asarray(False),
+            iterations=jnp.asarray(1, dtype=jnp.int32),
+        )
+
+    monkeypatch.setattr(sbm_kernel, "sample_gig", reject_gamma)
+    monkeypatch.setattr(sbm_kernel, "_sample_gig_batch", _accepted_batch_gig)
+    run_sweep = jax.jit(
+        lambda key, initial_state, *sweep_arguments: sbm_kernel.sbm_sweep(
+            key,
+            initial_state,
+            *sweep_arguments,
+        )
+    )
+
+    result = run_sweep(jax.random.key(107), state, *arguments)
+
+    assert not result.accepted
+    _assert_state_array_equal(result.state, state)
+
+
+def test_sample_sbm_chain_carries_input_state_through_rejected_sweeps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state, arguments = _sbm_rollback_case()
+
+    def reject_gamma(
+        key: jax.Array,
+        lambda_: jax.Array,
+        chi: jax.Array,
+        psi: jax.Array,
+    ) -> GIGSample:
+        del key, lambda_, psi
+        return GIGSample(
+            value=jnp.ones_like(chi),
+            accepted=jnp.asarray(False),
+            iterations=jnp.asarray(1, dtype=jnp.int32),
+        )
+
+    monkeypatch.setattr(sbm_kernel, "sample_gig", reject_gamma)
+    monkeypatch.setattr(sbm_kernel, "_sample_gig_batch", _accepted_batch_gig)
+    run_chain = jax.jit(
+        lambda key, initial_state: sbm_kernel.sample_sbm_chain(
+            key,
+            initial_state,
+            *arguments,
+            burnin=1,
+            n_samples=2,
+        )
+    )
+
+    result = run_chain(jax.random.key(109), state)
+
+    assert jnp.array_equal(result.accepted, jnp.asarray([False, False, False]))
+    _assert_state_array_equal(result.final_state, state)
+    assert jnp.array_equal(
+        result.covariance,
+        jnp.broadcast_to(state.covariance, result.covariance.shape),
+    )
+    assert jnp.array_equal(
+        result.phi,
+        jnp.broadcast_to(state.phi, result.phi.shape),
+    )
+
+
+def test_all_active_sbm_and_bm_sweeps_match_when_phi_draw_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dtype = jnp.float32
+    covariance, _, scatter, _, _ = _column_case(dtype)
+    tau1sq = jnp.asarray(0.15, dtype=dtype)
+    active_mask = ~jnp.eye(4, dtype=jnp.bool_)
+    bm_state = initialize_bm_state(covariance, tau1sq)
+    sbm_state = initialize_sbm_state(covariance, tau1sq, active_mask)
+    arguments = (
+        scatter,
+        jnp.asarray(
+            [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]],
+            dtype=jnp.int32,
+        ),
+        jnp.asarray(6),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(1.0, dtype=dtype),
+        tau1sq,
+    )
+
+    def accept_gamma(
+        key: jax.Array,
+        lambda_: jax.Array,
+        chi: jax.Array,
+        psi: jax.Array,
+    ) -> GIGSample:
+        del key, lambda_, psi
+        return GIGSample(
+            value=jnp.ones_like(chi),
+            accepted=jnp.asarray(True),
+            iterations=jnp.asarray(1, dtype=jnp.int32),
+        )
+
+    def reject_phi(
+        keys: jax.Array,
+        lambda_: jax.Array,
+        chi: jax.Array,
+        psi: jax.Array,
+    ) -> GIGSample:
+        del keys, lambda_, psi
+        return GIGSample(
+            value=jnp.ones_like(chi),
+            accepted=jnp.zeros_like(chi, dtype=jnp.bool_),
+            iterations=jnp.ones_like(chi, dtype=jnp.int32),
+        )
+
+    monkeypatch.setattr(bm_kernel, "sample_gig", accept_gamma)
+    monkeypatch.setattr(sbm_kernel, "sample_gig", accept_gamma)
+    monkeypatch.setattr(bm_kernel, "_sample_gig_batch", reject_phi)
+    monkeypatch.setattr(sbm_kernel, "_sample_gig_batch", reject_phi)
+    run_bm = jax.jit(lambda key, state: bm_kernel.bm_sweep(key, state, *arguments))
+    run_sbm = jax.jit(
+        lambda key, state: sbm_kernel.sbm_sweep(
+            key,
+            state,
+            *arguments,
+            active_mask,
+        )
+    )
+
+    sweep_key = jax.random.key(113)
+    bm_result = run_bm(sweep_key, bm_state)
+    sbm_result = run_sbm(sweep_key, sbm_state)
+
+    assert not bm_result.accepted
+    assert not sbm_result.accepted
+    _assert_state_array_equal(bm_result.state, bm_state)
+    _assert_state_array_equal(sbm_result.state, sbm_state)
+    _assert_state_array_equal(sbm_result.state, bm_result.state)
 
 
 def test_sample_sbm_chain_matches_sequential_sweeps() -> None:
