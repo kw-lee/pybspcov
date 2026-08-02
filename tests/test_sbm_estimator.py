@@ -66,6 +66,23 @@ def test_sbmspcov_fit_exposes_lazy_packed_device_arrays(dtype_name: str) -> None
     assert model.phi_samples_.shape == (2, 2, 3, 3)
     assert model.covariance_.shape == (3, 3)
     assert model.covariance_.dtype == jnp.dtype(dtype_name)
+    tolerance = 2e-5 if dtype_name == "float32" else 1e-11
+    assert jnp.all(jnp.isfinite(model.posterior_samples_))
+    assert jnp.allclose(
+        model.posterior_samples_,
+        jnp.swapaxes(model.posterior_samples_, -1, -2),
+        rtol=tolerance,
+        atol=tolerance,
+    )
+    assert jnp.all(jnp.linalg.eigvalsh(model.posterior_samples_) > 0.0)
+    assert jnp.all(jnp.isfinite(model.covariance_))
+    assert jnp.allclose(
+        model.covariance_,
+        model.covariance_.T,
+        rtol=tolerance,
+        atol=tolerance,
+    )
+    assert jnp.all(jnp.linalg.eigvalsh(model.covariance_) > 0.0)
     assert jnp.allclose(
         model.covariance_,
         jnp.mean(model.posterior_samples_, axis=(0, 1)),
