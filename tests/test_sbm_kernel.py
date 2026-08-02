@@ -12,6 +12,7 @@ from pybspcov.kernels.sbm import (
     sbm_sweep,
     validate_sbm_active_mask,
 )
+from pybspcov.sampling.gig import GIGSample
 
 
 def _column_case(dtype: jnp.dtype) -> tuple[jax.Array, ...]:
@@ -323,6 +324,45 @@ def test_sbm_sweep_handles_a_fully_screened_graph() -> None:
         jnp.linalg.inv(result.state.covariance),
         rtol=2e-6,
         atol=2e-6,
+    )
+
+
+def test_sbm_sweep_propagates_accepted_sub_micro_gamma_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dtype = jnp.float32
+    tiny_gamma = jnp.asarray(5e-7, dtype=dtype)
+
+    def accepted_tiny_gamma(*_: object) -> GIGSample:
+        return GIGSample(
+            value=tiny_gamma,
+            accepted=jnp.asarray(True),
+            iterations=jnp.asarray(1, dtype=jnp.int32),
+        )
+
+    monkeypatch.setattr(sbm_kernel, "sample_gig", accepted_tiny_gamma)
+    covariance = jnp.eye(2, dtype=dtype)
+    active_mask = jnp.zeros((2, 2), dtype=jnp.bool_)
+    tau1sq = jnp.asarray(0.15, dtype=dtype)
+    state = initialize_sbm_state(covariance, tau1sq, active_mask)
+
+    result = sbm_sweep(
+        jax.random.key(103),
+        state,
+        covariance,
+        jnp.asarray([[1], [0]], dtype=jnp.int32),
+        jnp.asarray(6),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(0.5, dtype=dtype),
+        jnp.asarray(1.0, dtype=dtype),
+        tau1sq,
+        active_mask,
+    )
+
+    assert result.accepted
+    assert jnp.array_equal(
+        jnp.diag(result.state.covariance),
+        jnp.full((2,), tiny_gamma, dtype=dtype),
     )
 
 

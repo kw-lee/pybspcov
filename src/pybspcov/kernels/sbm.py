@@ -228,7 +228,7 @@ def sbm_sweep(
         )
         gamma = jnp.where(
             gamma_draw.accepted,
-            jnp.maximum(gamma_draw.value, jnp.asarray(1e-6, dtype=dtype)),
+            gamma_draw.value,
             jnp.asarray(1.0, dtype=dtype),
         )
         beta_precision, beta_mean = _sbm_beta_parameters(
