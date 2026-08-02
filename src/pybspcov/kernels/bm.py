@@ -277,7 +277,13 @@ def bm_sweep(
         update_column,
         (state, key, jnp.asarray(True)),
     )
-    return BMSweepResult(state=updated, accepted=accepted)
+    committed = jax.lax.cond(
+        accepted,
+        lambda _: updated,
+        lambda _: state,
+        operand=None,
+    )
+    return BMSweepResult(state=committed, accepted=accepted)
 
 
 def sample_bm_chain(
