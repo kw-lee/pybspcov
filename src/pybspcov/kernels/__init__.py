@@ -54,6 +54,6 @@ __all__ = [
     "sbm_column_parameters",
     "sbm_sweep",
     "unpack_lower_triangle_column_major",
-    "validate_sbm_active_mask",
     "update_covariance_column",
+    "validate_sbm_active_mask",
 ]
