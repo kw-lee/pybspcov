@@ -12,6 +12,7 @@ import statistics
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
 from pathlib import Path
@@ -522,9 +523,15 @@ def main() -> None:
         )
 
 
-if __name__ == "__main__":
+def cli(run: Callable[[], None] = main) -> int:
+    """Run the benchmark CLI and normalize expected runtime failures."""
     try:
-        main()
+        run()
     except RuntimeError as error:
         print(f"run_pybspcov.py: {error}", file=sys.stderr)
-        raise SystemExit(2) from error
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli())

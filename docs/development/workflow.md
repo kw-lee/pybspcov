@@ -70,15 +70,15 @@ git branch -d feat/gig-sampler
 git worktree prune
 ```
 
-Remove a worktree only after its changes are committed or intentionally
-discarded and its pull request is merged or closed. Do not use forced removal
-to hide an unclean tree.
+Remove a worktree only after its changes are committed and its branch is merged
+into the current canonical base. Do not use forced removal to hide an unclean
+tree.
 
 ### Merged Branch Cleanup
 
-Audit branches and worktrees at the end of every integration wave and before
-creating another worktree. Fetch remote deletion state first, then remove only
-clean worktrees whose pull requests are merged or closed:
+Periodically audit local branches and worktrees after an integration wave.
+Remove only clean worktrees whose branches are merged into the current
+canonical base, then delete those merged local branches:
 
 ```bash
 git fetch --prune origin
@@ -89,11 +89,11 @@ git branch -d feat/gig-sampler
 git worktree prune
 ```
 
-Delete the corresponding remote topic branch when the pull request is merged.
-Do not remove the base of an active stacked branch until its dependents have
-been rebased or retargeted to the updated `main`. Never use forced worktree or
-branch deletion as routine cleanup; investigate uncommitted or unmerged work
-instead.
+Do not delete unmerged branches or remote branches during this cleanup. Remote
+branch deletion remains a maintainer-controlled operation. Do not remove the
+base of an active stacked branch until its dependents have been rebased or
+retargeted to the updated `main`. Never use forced deletion as routine cleanup;
+investigate uncommitted or unmerged work instead.
 
 ## Parallel Work Rules
 
@@ -138,7 +138,8 @@ the prerequisite commits by copying patches between worktrees.
 4. Review generated files, dependency changes, and benchmark claims.
 5. Open a focused pull request and resolve all review conversations.
 6. Merge only after required checks and approval pass.
-7. Delete the remote topic branch and remove its local worktree.
+7. Periodically remove its clean local worktree and local branch after the
+   branch is merged into the current canonical base.
 
 GPU correctness jobs may run concurrently when resources permit. Performance
 benchmarks must hold an exclusive GPU reservation and record other device

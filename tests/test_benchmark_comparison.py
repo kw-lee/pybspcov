@@ -494,3 +494,16 @@ def test_select_device_normalizes_backend_initialization_failures(
         benchmark_runner.select_device("cuda")
 
     assert requested_platforms == ["cuda"]
+
+
+def test_cli_reports_an_unavailable_cuda_device_without_backend_initialization(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def reject_cuda() -> None:
+        raise RuntimeError("requested JAX CUDA device is unavailable")
+
+    assert benchmark_runner.cli(reject_cuda) == 2
+    assert (
+        capsys.readouterr().err
+        == "run_pybspcov.py: requested JAX CUDA device is unavailable\n"
+    )
