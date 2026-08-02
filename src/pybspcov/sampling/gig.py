@@ -118,32 +118,15 @@ def _sample_small_omega(
     return GIGSample(value=value, accepted=accepted, iterations=iterations)
 
 
-def sample_gig(
+def _sample_no_shift(
     key: Array,
     lambda_: Array,
-    chi: Array,
-    psi: Array,
-    *,
-    max_iterations: int = 256,
+    shape: Array,
+    omega: Array,
+    alpha: Array,
+    max_iterations: int,
 ) -> GIGSample:
-    """Draw one ``GIG(lambda_, chi, psi)`` variate.
-
-    The implementation follows the no-shift ratio-of-uniforms and small-omega
-    rejection regimes used by GIGrvg. Exhausted rejection loops return
-    ``accepted=False`` so the compiled caller can handle them explicitly.
-    """
-    shape = jnp.abs(lambda_)
-    omega = jnp.sqrt(psi * chi)
-    alpha = jnp.sqrt(chi / psi)
-    valid = (
-        jnp.isfinite(lambda_)
-        & jnp.isfinite(chi)
-        & jnp.isfinite(psi)
-        & (chi > 0.0)
-        & (psi > 0.0)
-    )
-    no_shift_supported = (shape >= 1.0 - 2.25 * jnp.square(omega)) | (omega > 0.2)
-
+    """Sample the no-shift ratio-of-uniforms GIGrvg regime."""
     t = 0.5 * (shape - 1.0)
     s = 0.25 * omega
     mode = _standardized_mode(shape, omega)
@@ -157,7 +140,7 @@ def sample_gig(
         - log_normalizer
     )
 
-    dtype = jnp.result_type(lambda_, chi, psi)
+    dtype = jnp.result_type(lambda_, omega, alpha)
     initial = (
         key,
         jnp.asarray(jnp.nan, dtype=dtype),
@@ -193,12 +176,70 @@ def sample_gig(
         return current_key, value, accepted, iterations + 1
 
     _, value, accepted, iterations = jax.lax.while_loop(condition, draw, initial)
-    small_sample = _sample_small_omega(
-        key, lambda_, shape, omega, alpha, max_iterations
-    )
-    use_small = valid & (~no_shift_supported)
-    accepted = jnp.where(use_small, small_sample.accepted, accepted & valid)
-    value = jnp.where(use_small, small_sample.value, value)
-    iterations = jnp.where(use_small, small_sample.iterations, iterations)
-    value = jnp.where(accepted, value, jnp.asarray(jnp.nan, dtype=dtype))
     return GIGSample(value=value, accepted=accepted, iterations=iterations)
+
+
+def sample_gig(
+    key: Array,
+    lambda_: Array,
+    chi: Array,
+    psi: Array,
+    *,
+    max_iterations: int = 256,
+) -> GIGSample:
+    """Draw one ``GIG(lambda_, chi, psi)`` variate.
+
+    The implementation follows the no-shift ratio-of-uniforms and small-omega
+    rejection regimes used by GIGrvg. Exhausted rejection loops return
+    ``accepted=False`` so the compiled caller can handle them explicitly.
+    """
+    shape = jnp.abs(lambda_)
+    omega = jnp.sqrt(psi * chi)
+    alpha = jnp.sqrt(chi / psi)
+    valid = (
+        jnp.isfinite(lambda_)
+        & jnp.isfinite(chi)
+        & jnp.isfinite(psi)
+        & (chi > 0.0)
+        & (psi > 0.0)
+    )
+    no_shift_supported = (shape >= 1.0 - 2.25 * jnp.square(omega)) | (omega > 0.2)
+
+    use_small = valid & (~no_shift_supported)
+    operands = (key, lambda_, shape, omega, alpha)
+
+    def sample_small(values: tuple[Array, Array, Array, Array, Array]) -> GIGSample:
+        branch_key, branch_lambda, branch_shape, branch_omega, branch_alpha = values
+        return _sample_small_omega(
+            branch_key,
+            branch_lambda,
+            branch_shape,
+            branch_omega,
+            branch_alpha,
+            max_iterations,
+        )
+
+    def sample_no_shift(values: tuple[Array, Array, Array, Array, Array]) -> GIGSample:
+        branch_key, branch_lambda, branch_shape, branch_omega, branch_alpha = values
+        return _sample_no_shift(
+            branch_key,
+            branch_lambda,
+            branch_shape,
+            branch_omega,
+            branch_alpha,
+            max_iterations,
+        )
+
+    sample = jax.lax.cond(
+        use_small,
+        sample_small,
+        sample_no_shift,
+        operands,
+    )
+    accepted = sample.accepted & valid
+    value = jnp.where(
+        accepted,
+        sample.value,
+        jnp.asarray(jnp.nan, dtype=jnp.result_type(lambda_, chi, psi)),
+    )
+    return GIGSample(value=value, accepted=accepted, iterations=sample.iterations)
