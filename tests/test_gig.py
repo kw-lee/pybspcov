@@ -248,6 +248,55 @@ def test_gig_dispatches_rejection_regimes_with_cond() -> None:
         pytest.param(0.0, 0.01, 1.0, id="small-omega"),
     ],
 )
+@pytest.mark.parametrize("compiled", [False, True], ids=("eager", "jit"))
+def test_scalar_gig_chunked_proposals_match_single_proposal_loop(
+    lambda_value: float,
+    chi: float,
+    psi: float,
+    compiled: bool,
+) -> None:
+    sampler = (
+        jax.jit(sample_gig, static_argnames=("proposal_chunk_size",))
+        if compiled
+        else sample_gig
+    )
+    key = jax.random.key(61)
+    arguments = (
+        key,
+        jnp.asarray(lambda_value),
+        jnp.asarray(chi),
+        jnp.asarray(psi),
+    )
+
+    single = sampler(*arguments, proposal_chunk_size=1)
+    chunked = sampler(*arguments, proposal_chunk_size=8)
+
+    assert jnp.array_equal(chunked.value, single.value)
+    assert jnp.array_equal(chunked.accepted, single.accepted)
+    assert jnp.array_equal(chunked.iterations, single.iterations)
+
+
+@pytest.mark.parametrize("proposal_chunk_size", [0, -1, 1.5])
+def test_scalar_gig_rejects_invalid_proposal_chunk_size(
+    proposal_chunk_size: object,
+) -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        sample_gig(
+            jax.random.key(67),
+            jnp.asarray(-2.0),
+            jnp.asarray(2.0),
+            jnp.asarray(1.0),
+            proposal_chunk_size=proposal_chunk_size,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize(
+    ("lambda_value", "chi", "psi"),
+    [
+        pytest.param(-2.0, 2.0, 1.0, id="no-shift"),
+        pytest.param(0.0, 0.01, 1.0, id="small-omega"),
+    ],
+)
 def test_gig_zero_iteration_bound_exhausts_selected_regime(
     lambda_value: float, chi: float, psi: float
 ) -> None:
