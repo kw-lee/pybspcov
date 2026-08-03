@@ -70,20 +70,20 @@ git branch -d feat/gig-sampler
 git worktree prune
 ```
 
-Remove a worktree only after its changes are committed and its branch is merged
-into the current canonical base. Do not use forced removal to hide an unclean
-tree.
+Remove a worktree only after its changes are committed and
+`git branch --merged origin/main` lists its branch. Do not use forced removal
+to hide an unclean tree.
 
 ### Merged Branch Cleanup
 
 Periodically audit local branches and worktrees after an integration wave.
 Remove only clean worktrees whose branches are merged into the current
-canonical base, then delete those merged local branches:
+`origin/main`, then delete those merged local branches:
 
 ```bash
 git fetch --prune origin
 git worktree list
-git branch --merged main
+git branch --merged origin/main
 git worktree remove .worktrees/gig-sampler
 git branch -d feat/gig-sampler
 git worktree prune
@@ -139,7 +139,7 @@ the prerequisite commits by copying patches between worktrees.
 5. Open a focused pull request and resolve all review conversations.
 6. Merge only after required checks and approval pass.
 7. Periodically remove its clean local worktree and local branch after the
-   branch is merged into the current canonical base.
+   branch appears in `git branch --merged origin/main`.
 
 GPU correctness jobs may run concurrently when resources permit. Performance
 benchmarks must hold an exclusive GPU reservation and record other device

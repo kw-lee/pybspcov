@@ -29,6 +29,13 @@ def test_required_local_test_commands_match_cpu_ci_precision() -> None:
     assert command in contributing
 
 
+def test_branch_cleanup_uses_the_current_remote_main() -> None:
+    workflow = Path("docs/development/workflow.md").read_text(encoding="utf-8")
+
+    assert "git branch --merged origin/main" in workflow
+    assert "git branch --merged main" not in workflow
+
+
 def test_actions_are_pinned_to_full_shas() -> None:
     workflow = Path(".github/workflows/ci.yml")
     assert workflow.is_file()

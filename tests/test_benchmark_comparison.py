@@ -490,7 +490,10 @@ def test_select_device_normalizes_backend_initialization_failures(
 
     monkeypatch.setattr(benchmark_runner.jax, "devices", fail_to_initialize)
 
-    with pytest.raises(RuntimeError, match="requested JAX CUDA device is unavailable"):
+    with pytest.raises(
+        benchmark_runner.DeviceUnavailableError,
+        match="requested JAX CUDA device is unavailable",
+    ):
         benchmark_runner.select_device("cuda")
 
     assert requested_platforms == ["cuda"]
@@ -500,10 +503,20 @@ def test_cli_reports_an_unavailable_cuda_device_without_backend_initialization(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     def reject_cuda() -> None:
-        raise RuntimeError("requested JAX CUDA device is unavailable")
+        raise benchmark_runner.DeviceUnavailableError(
+            "requested JAX CUDA device is unavailable"
+        )
 
     assert benchmark_runner.cli(reject_cuda) == 2
     assert (
         capsys.readouterr().err
         == "run_pybspcov.py: requested JAX CUDA device is unavailable\n"
     )
+
+
+def test_cli_does_not_hide_unrelated_runtime_failures() -> None:
+    def fail_benchmark() -> None:
+        raise RuntimeError("invalid benchmark state")
+
+    with pytest.raises(RuntimeError, match="invalid benchmark state"):
+        benchmark_runner.cli(fail_benchmark)

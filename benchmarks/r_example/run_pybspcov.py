@@ -225,6 +225,10 @@ def git_provenance(project_root: Path) -> tuple[str, str]:
     return revision, str(bool(status_result.stdout.strip())).lower()
 
 
+class DeviceUnavailableError(RuntimeError):
+    """Raised when the explicitly requested JAX device cannot be selected."""
+
+
 def jax_platform_name(device: str) -> str:
     """Translate the user-facing device alias to a registered JAX platform."""
     return "cuda" if device == "gpu" else device
@@ -235,11 +239,11 @@ def select_device(platform_name: str) -> jax.Device:
     try:
         devices = jax.devices(platform_name)
     except (AssertionError, RuntimeError) as error:
-        raise RuntimeError(
+        raise DeviceUnavailableError(
             f"requested JAX {platform_name.upper()} device is unavailable"
         ) from error
     if not devices:
-        raise RuntimeError(
+        raise DeviceUnavailableError(
             f"requested JAX {platform_name.upper()} device is unavailable"
         )
     return devices[0]
@@ -527,7 +531,7 @@ def cli(run: Callable[[], None] = main) -> int:
     """Run the benchmark CLI and normalize expected runtime failures."""
     try:
         run()
-    except RuntimeError as error:
+    except DeviceUnavailableError as error:
         print(f"run_pybspcov.py: {error}", file=sys.stderr)
         return 2
     return 0
