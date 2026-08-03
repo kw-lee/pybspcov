@@ -20,6 +20,29 @@ For `p` variables, fitted packed covariance draws have shape
 reconstructs symmetric draws with shape `(n_chains, n_samples, p, p)`, and
 `covariance_` is their posterior mean pooled across chains and retained samples.
 
+## SBMSPCov contract
+
+`SBMSPCov` follows the same centered-input, typed-key, sample-layout, dtype, and
+device contract as `BMSPCov`. `device=None` uses JAX's default device; explicit
+`"cpu"` or `"gpu"` requests fail when that backend is unavailable, and fitted
+arrays stay on the selected device. The default FNR screen uses correlation `0.25`,
+false-negative rate `0.05`, and `1000` cutoff simulations. Correlation screening
+is selected with `cutoff_method="correlation"` and defaults to a retained
+fraction of `0.2`.
+
+Screening is computed once per Python fit and the resulting `screening_mask_` is
+shared by all chains. This is an intentional reproducibility difference from
+`bspcov` 1.0.3, which consumes independent screening randomness per chain in its
+FNR path. `screening_cutoff_` is an array for FNR screening and `None` for
+correlation screening. Packed and reconstructed posterior draws have the same
+shapes as `BMSPCov`; `diagnostics_` additionally records the screening method,
+jitter, and active/screened edge counts.
+
+The current R-derived tests establish screening and orchestration contracts.
+They do not establish end-to-end posterior equivalence. Scientific parity and
+performance claims require the separate, versioned R/Python benchmark with
+Monte Carlo uncertainty and complete runtime provenance.
+
 ```{toctree}
 :maxdepth: 2
 :caption: Contents

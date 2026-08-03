@@ -44,6 +44,23 @@ posterior_mean = model.covariance_
 `dtype="float32"` path is experimental and should be compared with the default
 float64 and R reference results before scientific use.
 
+`SBMSPCov` has the same input, dtype, device, key, and packed-sample contracts.
+With `device=None`, JAX selects its default device; `device="cpu"` and
+`device="gpu"` request those backends explicitly and fail clearly when the
+requested backend is unavailable. Fitted arrays remain on the selected device.
+Its default `cutoff_method="fnr"` uses `fnr_correlation=0.25`,
+`false_negative_rate=0.05`, and `n_cutoff_simulations=1000`; the alternative
+`cutoff_method="correlation"` uses `retained_fraction=0.2`. Screening runs once
+per fit and all Python chains share `screening_mask_`. This intentionally differs
+from `bspcov` 1.0.3, whose FNR path draws a separate screening cutoff for each
+chain. `screening_cutoff_` is populated only for FNR screening, and
+`diagnostics_` reports active and screened edge counts.
+
+The checked-in R fixtures currently validate screening formulas and estimator
+orchestration. They do not yet constitute end-to-end posterior parity evidence;
+posterior summaries and timings must be compared in the dedicated R/Python
+benchmark before scientific equivalence or speedup is claimed.
+
 ## Development installation
 
 The development package can be installed with its CPU dependencies as follows.
