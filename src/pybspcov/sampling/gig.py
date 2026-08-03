@@ -26,6 +26,48 @@ def _standardized_mode(shape: Array, omega: Array) -> Array:
     return jnp.where(shape >= 1.0, above_one, below_one)
 
 
+_ScalarState = tuple[Array, Array, Array, Array]
+
+
+def _run_scalar_rejection_loop(
+    condition: Callable[[_ScalarState], Array],
+    draw: Callable[[_ScalarState], _ScalarState],
+    initial: _ScalarState,
+    proposal_chunk_size: int,
+) -> _ScalarState:
+    """Run scalar proposals in exact, acceptance-preserving chunks."""
+    if proposal_chunk_size == 1:
+        return jax.lax.while_loop(condition, draw, initial)
+
+    def draw_one(
+        state: _ScalarState,
+        _: None,
+    ) -> tuple[_ScalarState, None]:
+        active = condition(state)
+        proposed = draw(state)
+        selected = jax.tree.map(
+            lambda proposed_value, current_value: jax.lax.select(
+                active,
+                proposed_value,
+                current_value,
+            ),
+            proposed,
+            state,
+        )
+        return selected, None
+
+    def draw_chunk(state: _ScalarState) -> _ScalarState:
+        state, _ = jax.lax.scan(
+            draw_one,
+            state,
+            xs=None,
+            length=proposal_chunk_size,
+        )
+        return state
+
+    return jax.lax.while_loop(condition, draw_chunk, initial)
+
+
 def _sample_small_omega(
     key: Array,
     lambda_: Array,
@@ -33,6 +75,7 @@ def _sample_small_omega(
     omega: Array,
     alpha: Array,
     max_iterations: int,
+    proposal_chunk_size: int,
 ) -> GIGSample:
     """Sample the small-omega, shape-below-one GIGrvg regime."""
     dtype = jnp.result_type(lambda_, omega, alpha)
@@ -115,7 +158,9 @@ def _sample_small_omega(
         value = jnp.where(accepted, candidate, value)
         return current_key, value, accepted, iterations + 1
 
-    _, value, accepted, iterations = jax.lax.while_loop(condition, draw, initial)
+    _, value, accepted, iterations = _run_scalar_rejection_loop(
+        condition, draw, initial, proposal_chunk_size
+    )
     return GIGSample(value=value, accepted=accepted, iterations=iterations)
 
 
@@ -126,6 +171,7 @@ def _sample_no_shift(
     omega: Array,
     alpha: Array,
     max_iterations: int,
+    proposal_chunk_size: int,
 ) -> GIGSample:
     """Sample the no-shift ratio-of-uniforms GIGrvg regime."""
     t = 0.5 * (shape - 1.0)
@@ -176,7 +222,9 @@ def _sample_no_shift(
         value = jnp.where(accepted, candidate, value)
         return current_key, value, accepted, iterations + 1
 
-    _, value, accepted, iterations = jax.lax.while_loop(condition, draw, initial)
+    _, value, accepted, iterations = _run_scalar_rejection_loop(
+        condition, draw, initial, proposal_chunk_size
+    )
     return GIGSample(value=value, accepted=accepted, iterations=iterations)
 
 
@@ -418,6 +466,7 @@ def sample_gig(
     psi: Array,
     *,
     max_iterations: int = 256,
+    proposal_chunk_size: int = 8,
 ) -> GIGSample:
     """Draw one ``GIG(lambda_, chi, psi)`` variate.
 
@@ -425,6 +474,9 @@ def sample_gig(
     rejection regimes used by GIGrvg. Exhausted rejection loops return
     ``accepted=False`` so the compiled caller can handle them explicitly.
     """
+    if not isinstance(proposal_chunk_size, int) or proposal_chunk_size < 1:
+        raise ValueError("proposal_chunk_size must be a positive integer")
+
     shape = jnp.abs(lambda_)
     omega = jnp.sqrt(psi * chi)
     alpha = jnp.sqrt(chi / psi)
@@ -450,6 +502,7 @@ def sample_gig(
             branch_omega,
             branch_alpha,
             max_iterations,
+            proposal_chunk_size,
         )
 
     def sample_no_shift(values: tuple[Array, Array, Array, Array, Array]) -> GIGSample:
@@ -461,6 +514,7 @@ def sample_gig(
             branch_omega,
             branch_alpha,
             max_iterations,
+            proposal_chunk_size,
         )
 
     sample = jax.lax.cond(
