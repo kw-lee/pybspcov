@@ -16,21 +16,34 @@ The package provides `BMSPCov`, based on the beta-mixture shrinkage prior.
 `SBMSPCov`, based on the screened beta-mixture shrinkage prior, remains the next
 estimator milestone.
 
-The implementation uses JAX and XLA for CPU and NVIDIA GPU execution. The
-package itself will not contain custom C, C++, or CUDA extensions. It will use
-64-bit floating point arithmetic by default and evaluate masked dense and sparse
-GPU strategies with reproducible benchmarks.
+The implementation uses JAX and XLA for CPU and NVIDIA GPU execution. The package
+itself will not contain custom C, C++, or CUDA extensions. It will evaluate masked
+dense and sparse GPU strategies with reproducible benchmarks.
 
-The current `BMSPCov` API is:
+The default `BMSPCov` path uses `float64`. Enable JAX X64 before starting
+Python:
+
+```bash
+JAX_ENABLE_X64=1 uv run python
+```
+
+Then fit already-centered observations with a typed JAX key:
 
 ```python
 import jax
 from pybspcov import BMSPCov
 
-model = BMSPCov(n_samples=2_000, n_chains=4, dtype="float32")
+model = BMSPCov(n_samples=2_000, n_chains=4)
 model.fit(X_centered, key=jax.random.key(42))
 posterior_mean = model.covariance_
 ```
+
+`BMSPCov` does not center its input. For `p` variables,
+`posterior_samples_packed_` has shape
+`(n_chains, n_samples, p * (p + 1) // 2)`, while the reconstructed
+`posterior_samples_` has shape `(n_chains, n_samples, p, p)`. The
+`dtype="float32"` path is experimental and should be compared with the default
+float64 and R reference results before scientific use.
 
 ## Development installation
 

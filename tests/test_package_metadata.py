@@ -36,6 +36,14 @@ def test_branch_cleanup_uses_the_current_remote_main() -> None:
     assert "git branch --merged main" not in workflow
 
 
+def test_public_estimator_docs_state_precision_and_sample_shapes() -> None:
+    for path in (Path("README.md"), Path("docs/source/index.md")):
+        documentation = path.read_text(encoding="utf-8")
+        assert "JAX_ENABLE_X64=1" in documentation, path
+        assert "float32" in documentation and "experimental" in documentation, path
+        assert "(n_chains, n_samples, p, p)" in documentation, path
+
+
 def test_actions_are_pinned_to_full_shas() -> None:
     workflow = Path(".github/workflows/ci.yml")
     assert workflow.is_file()
