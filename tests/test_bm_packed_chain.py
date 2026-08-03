@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+import pybspcov.kernels.bm as bm_kernel
 from pybspcov.kernels import (
     pack_lower_triangle_column_major,
     sample_bm_packed_chain,
@@ -14,6 +15,7 @@ from pybspcov.kernels.bm import (
     sample_bm_chain,
     sample_bm_chains,
 )
+from pybspcov.sampling.gig import GIGSample
 
 
 def _bm_chain_case(
@@ -164,6 +166,65 @@ def test_sample_bm_packed_chains_matches_full_multichain_output() -> None:
         full.phi,
     )
     assert jnp.array_equal(packed.accepted, full.accepted)
+
+
+def test_sample_bm_packed_chain_retains_rolled_back_rejected_sweeps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state, arguments = _bm_chain_case(jnp.float32)
+
+    def reject_gamma(
+        key: jax.Array,
+        lambda_: jax.Array,
+        chi: jax.Array,
+        psi: jax.Array,
+    ) -> GIGSample:
+        del key, lambda_, psi
+        return GIGSample(
+            value=jnp.ones_like(chi),
+            accepted=jnp.asarray(False),
+            iterations=jnp.asarray(1, dtype=jnp.int32),
+        )
+
+    def accept_phi(
+        keys: jax.Array,
+        lambda_: jax.Array,
+        chi: jax.Array,
+        psi: jax.Array,
+    ) -> GIGSample:
+        del keys, lambda_, psi
+        return GIGSample(
+            value=jnp.ones_like(chi),
+            accepted=jnp.ones_like(chi, dtype=jnp.bool_),
+            iterations=jnp.ones_like(chi, dtype=jnp.int32),
+        )
+
+    monkeypatch.setattr(bm_kernel, "sample_gig", reject_gamma)
+    monkeypatch.setattr(bm_kernel, "_sample_gig_batch", accept_phi)
+    result = jax.jit(
+        bm_kernel.sample_bm_packed_chain,
+        static_argnames=("burnin", "n_samples"),
+    )(
+        jax.random.key(211),
+        state,
+        *arguments,
+        burnin=1,
+        n_samples=2,
+    )
+
+    expected_covariance = pack_lower_triangle_column_major(state.covariance)
+    expected_phi = pack_lower_triangle_column_major(state.phi)
+    assert jnp.array_equal(result.accepted, jnp.asarray([False, False, False]))
+    assert jnp.array_equal(
+        result.covariance,
+        jnp.broadcast_to(expected_covariance, result.covariance.shape),
+    )
+    assert jnp.array_equal(
+        result.phi,
+        jnp.broadcast_to(expected_phi, result.phi.shape),
+    )
+    for actual, expected in zip(result.final_state, state, strict=True):
+        assert jnp.array_equal(actual, expected)
 
 
 def test_sample_bm_packed_chain_validates_static_lengths() -> None:
