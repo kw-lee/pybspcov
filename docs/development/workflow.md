@@ -55,7 +55,7 @@ git pull --ff-only
 git worktree add .worktrees/gig-sampler -b feat/gig-sampler main
 cd .worktrees/gig-sampler
 uv sync --all-groups --all-extras
-uv run pytest -q
+JAX_ENABLE_X64=1 JAX_PLATFORMS=cpu uv run pytest -q
 ```
 
 If the baseline fails, stop and report the failure before changing code. Each
@@ -70,15 +70,43 @@ git branch -d feat/gig-sampler
 git worktree prune
 ```
 
-Remove a worktree only after its changes are committed or intentionally
-discarded and its pull request is merged or closed. Do not use forced removal
+Remove a worktree only after its changes are committed and
+`git branch --merged origin/main` lists its branch. Do not use forced removal
 to hide an unclean tree.
+
+### Merged Branch Cleanup
+
+Periodically audit local branches and worktrees after an integration wave.
+Remove only clean worktrees whose branches are merged into the current
+`origin/main`, then delete those merged local branches:
+
+```bash
+git fetch --prune origin
+git worktree list
+git branch --merged origin/main
+git worktree remove .worktrees/gig-sampler
+git branch -d feat/gig-sampler
+git worktree prune
+```
+
+Do not delete unmerged branches or remote branches during this cleanup. Remote
+branch deletion remains a maintainer-controlled operation. Do not remove the
+base of an active stacked branch until its dependents have been rebased or
+retargeted to the updated `main`. Never use forced deletion as routine cleanup;
+investigate uncommitted or unmerged work instead.
+Keep at most three active topic worktrees. Before creating a fourth, finish,
+merge, close, or archive an existing track and obtain maintainer approval for
+the additional concurrency.
 
 ## Parallel Work Rules
 
 Parallel work is allowed only when tasks have independent inputs, outputs, and
 file ownership. Every parallel task gets its own branch, worktree, test cycle,
 and pull request.
+
+Do not parallelize repository audits, status reporting, multiple benchmarks on
+one GPU, or changes to the same kernel. Commits are checkpoints within a branch;
+do not create a new branch or worktree merely to record a checkpoint.
 
 | Track | Primary ownership | May start when |
 | --- | --- | --- |
@@ -109,6 +137,49 @@ dependent work from its prerequisite, target the prerequisite branch during
 review, and retarget to `main` after the prerequisite merges. Do not duplicate
 the prerequisite commits by copying patches between worktrees.
 
+Keep dependent branch stacks to one layer. Resolve and integrate the prerequisite
+before creating a second dependent layer. A branch that contains a large
+ancestor stack is not an independent pull request to the main branch.
+
+## Delivery and resource guardrails
+
+Before starting a branch, record:
+
+1. The concrete user-visible or maintainer-visible deliverable.
+2. The branch and files owned by the task.
+3. The focused evidence needed for acceptance.
+4. The stop condition and any time or command budget.
+
+Repository audits are limited to 15 minutes or 10 tool commands, whichever
+comes first, unless the maintainer approves an extension.
+
+A normal pull request should contain no more than 10 logical commits, 10
+non-generated files, or 1,500 changed non-generated lines. Split work that
+exceeds a limit, or document why it cannot be reviewed safely in smaller units.
+Generated fixtures are excluded from the line limit but must be isolated from
+implementation changes.
+
+Use this verification cadence:
+
+- Run focused tests during implementation.
+- Run the full CPU suite once when the pull request is ready for integration.
+- Use GPU verification only for GPU-relevant changes, with exclusive device
+  access and a recorded baseline.
+- Do not rerun an unchanged full suite, benchmark, profile, or audit.
+- Run a benchmark only when its result can accept, reject, or prioritize an
+  implementation decision.
+
+Delivery requires a committed implementation, passing focused verification, and
+a branch ready for a focused pull request. Branch count, commit count, test
+count, coverage, and documentation volume do not constitute delivery.
+
+On an emergency-stop request:
+
+1. Stop subagents and long-running commands.
+2. Preserve work on its current branch with a concise status note if needed.
+3. Do not start cleanup, merging, benchmarking, or new verification.
+4. Wait for explicit maintainer direction.
+
 ## Integration Sequence
 
 1. Rebase or update the topic branch from current `main`.
@@ -117,11 +188,24 @@ the prerequisite commits by copying patches between worktrees.
 4. Review generated files, dependency changes, and benchmark claims.
 5. Open a focused pull request and resolve all review conversations.
 6. Merge only after required checks and approval pass.
-7. Delete the remote topic branch and remove its local worktree.
+7. Periodically remove its clean local worktree and local branch after the
+   branch appears in `git branch --merged origin/main`.
+
+Do not start a new track while the current pull request is failing because of a
+known local fix or while completed ancestor worktrees remain untriaged.
 
 GPU correctness jobs may run concurrently when resources permit. Performance
 benchmarks must hold an exclusive GPU reservation and record other device
 activity so concurrent jobs do not contaminate timing or memory results.
+
+### CI Accelerator Policy
+
+The required pull-request suite runs on CPU and tests accelerator selection and
+failure handling with deterministic mocks. It must not initialize CUDA or infer
+GPU availability from a generic GitHub-hosted runner. Real CUDA smoke and
+correctness checks belong in a separate workflow backed by an explicitly
+provisioned GPU runner; performance benchmarks remain manual or scheduled and
+must never be a required check on ordinary pull requests.
 
 ## Agentic and AI-Assisted Work
 

@@ -1,46 +1,69 @@
 # pybspcov
 
-`pybspcov` is a planned pure-Python, JAX-accelerated port of the R package
+`pybspcov` is a pure-Python, JAX-accelerated port of the R package
 [`bspcov`](https://github.com/statjs/bspcov) for Bayesian sparse covariance
 estimation.
 
 > [!IMPORTANT]
-> This repository is in its bootstrap phase. It does not yet contain an
-> installable estimator implementation or a published package release.
+> This development repository contains the initial `BMSPCov` and `SBMSPCov`
+> estimators. A published package release is not yet available.
 
 Repository: <https://github.com/kw-lee/pybspcov>
 
 ## Initial scope
 
-The first functional milestone will provide class-based Python implementations
-of:
+The package provides `BMSPCov`, based on the beta-mixture shrinkage prior, and
+`SBMSPCov`, based on the screened beta-mixture shrinkage prior.
 
-- `BMSPCov`, based on the beta-mixture shrinkage prior; and
-- `SBMSPCov`, based on the screened beta-mixture shrinkage prior.
+The implementation uses JAX and XLA for CPU and NVIDIA GPU execution. The package
+itself will not contain custom C, C++, or CUDA extensions. It will evaluate masked
+dense and sparse GPU strategies with reproducible benchmarks.
 
-The implementation will use JAX and XLA for CPU and NVIDIA GPU execution. The
-package itself will not contain custom C, C++, or CUDA extensions. It will use
-64-bit floating point arithmetic by default and evaluate masked dense and sparse
-GPU strategies with reproducible benchmarks.
+The default `BMSPCov` path uses `float64`. Enable JAX X64 before starting
+Python:
 
-The intended public API is:
+```bash
+JAX_ENABLE_X64=1 uv run python
+```
+
+Then fit already-centered observations with a typed JAX key:
 
 ```python
 import jax
 from pybspcov import BMSPCov
 
 model = BMSPCov(n_samples=2_000, n_chains=4)
-model.fit(X, key=jax.random.key(42))
+model.fit(X_centered, key=jax.random.key(42))
 posterior_mean = model.covariance_
 ```
 
-This example documents the approved target API and is not executable in the
-bootstrap commit.
+`BMSPCov` does not center its input. For `p` variables,
+`posterior_samples_packed_` has shape
+`(n_chains, n_samples, p * (p + 1) // 2)`, while the reconstructed
+`posterior_samples_` has shape `(n_chains, n_samples, p, p)`. The
+`dtype="float32"` path is experimental and should be compared with the default
+float64 and R reference results before scientific use.
+
+`SBMSPCov` has the same input, dtype, device, key, and packed-sample contracts.
+With `device=None`, JAX selects its default device; `device="cpu"` and
+`device="gpu"` request those backends explicitly and fail clearly when the
+requested backend is unavailable. Fitted arrays remain on the selected device.
+Its default `cutoff_method="fnr"` uses `fnr_correlation=0.25`,
+`false_negative_rate=0.05`, and `n_cutoff_simulations=1000`; the alternative
+`cutoff_method="correlation"` uses `retained_fraction=0.2`. Screening runs once
+per fit and all Python chains share `screening_mask_`. This intentionally differs
+from `bspcov` 1.0.3, whose FNR path draws a separate screening cutoff for each
+chain. `screening_cutoff_` is populated only for FNR screening, and
+`diagnostics_` reports active and screened edge counts.
+
+The checked-in R fixtures currently validate screening formulas and estimator
+orchestration. They do not yet constitute end-to-end posterior parity evidence;
+posterior summaries and timings must be compared in the dedicated R/Python
+benchmark before scientific equivalence or speedup is claimed.
 
 ## Development installation
 
-The repository scaffold can be installed for CPU development. Estimator
-implementations are not yet available.
+The development package can be installed with its CPU dependencies as follows.
 
 ```bash
 git clone https://github.com/kw-lee/pybspcov.git

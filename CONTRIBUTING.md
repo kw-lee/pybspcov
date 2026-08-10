@@ -25,5 +25,6 @@ to an external model.
 ## Checks
 
 Run `uv run pre-commit run --all-files`, `uv run mypy -p pybspcov`,
-`JAX_ENABLE_X64=1 uv run pytest -q`, the Sphinx build, and package build
+`JAX_ENABLE_X64=1 JAX_PLATFORMS=cpu uv run pytest -q`, the Sphinx build, and
+package build
 checks described in the development workflow.

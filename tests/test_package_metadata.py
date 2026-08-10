@@ -18,6 +18,32 @@ def test_distribution_metadata() -> None:
     assert package["License-Expression"] == "GPL-2.0-or-later"
 
 
+def test_required_local_test_commands_match_cpu_ci_precision() -> None:
+    pre_commit = Path(".pre-commit-config.yaml").read_text(encoding="utf-8")
+    workflow = Path("docs/development/workflow.md").read_text(encoding="utf-8")
+    contributing = Path("CONTRIBUTING.md").read_text(encoding="utf-8")
+
+    command = "JAX_ENABLE_X64=1 JAX_PLATFORMS=cpu uv run pytest -q"
+    assert f"entry: env {command}" in pre_commit
+    assert command in workflow
+    assert command in contributing
+
+
+def test_branch_cleanup_uses_the_current_remote_main() -> None:
+    workflow = Path("docs/development/workflow.md").read_text(encoding="utf-8")
+
+    assert "git branch --merged origin/main" in workflow
+    assert "git branch --merged main" not in workflow
+
+
+def test_public_estimator_docs_state_precision_and_sample_shapes() -> None:
+    for path in (Path("README.md"), Path("docs/source/index.md")):
+        documentation = path.read_text(encoding="utf-8")
+        assert "JAX_ENABLE_X64=1" in documentation, path
+        assert "float32" in documentation and "experimental" in documentation, path
+        assert "(n_chains, n_samples, p, p)" in documentation, path
+
+
 def test_actions_are_pinned_to_full_shas() -> None:
     workflow = Path(".github/workflows/ci.yml")
     assert workflow.is_file()
