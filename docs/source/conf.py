@@ -11,8 +11,10 @@ nitpicky = True
 nitpick_ignore_regex = [
     (
         "py:class",
-        r"(?:jax\.Array|numpy\.(?:ndarray|bool|number)|"
-        r"_DTypeName|_DeviceRequest|_CutoffMethod)",
+        (
+            r"(?:jax\.Array|numpy\.(?:ndarray|bool|number)|"
+            r"_DTypeName|_DeviceRequest|_CutoffMethod)"
+        ),
     ),
 ]
 exclude_patterns = []
