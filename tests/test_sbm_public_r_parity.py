@@ -92,10 +92,7 @@ def _read_r_summary(dimension: int) -> dict[str, Any]:
         mcse_field = f"{statistic}_mcse"
         summary[mcse_field] = np.array(
             [
-                [
-                    float(keyed_rows[(row, column)][mcse_field])
-                    for column in range(1, 6)
-                ]
+                [float(keyed_rows[(row, column)][mcse_field]) for column in range(1, 6)]
                 for row in range(1, 6)
             ]
         )

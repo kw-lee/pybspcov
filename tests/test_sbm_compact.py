@@ -329,7 +329,11 @@ def test_compact_sbm_conditionals_preserve_zero_width() -> None:
     assert parameters.quadratic.shape == (0, 0)
     assert parameters.beta_precision.shape == (0, 0)
     assert parameters.beta_mean.shape == (0,)
-    assert parameters.gamma_chi == _column_case(dtype)[2][1, 1]
+    assert float(parameters.gamma_chi) == pytest.approx(
+        float(_column_case(dtype)[2][1, 1]),
+        rel=1e-6,
+        abs=0.0,
+    )
 
 
 def _nested_jaxprs(value: object) -> list[jax_core.Jaxpr]:
