@@ -74,3 +74,22 @@ There is an upstream API/documentation mismatch in 1.0.3: the help page says
 the correlation threshold field is `rho`, but `sbmspcov()` reads `thr`.
 Passing `rho` to the correlation branch does not override `thr`; Python parity
 must follow the implemented `thr` behavior documented by this fixture.
+
+## Public SBM posterior fixture
+
+`sbm_public_corr_summary.csv` records posterior summaries from the exported
+`bspcov::sbmspcov()` estimator on the committed, centered documentation
+example in `benchmarks/r_example/data`. The run uses correlation screening,
+`thr=0.2`, seed 1, 1,000 burn-in sweeps, and 1,000 retained samples.
+`sbm_public_corr_metadata.json` records the exact input hashes, support,
+screening cutoff, sampler settings, runtime, BLAS/LAPACK, and R session.
+
+Regenerate with exactly `bspcov` 1.0.3 installed and selected on `.libPaths()`:
+
+```text
+Rscript --vanilla reference/r/generate_sbm_public_corr_fixture.R
+```
+
+Python tests do not invoke R. They compare the public `SBMSPCov` estimator's
+support exactly and compare posterior summaries using six combined batch
+Monte Carlo standard errors.
