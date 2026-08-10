@@ -38,15 +38,17 @@ correlation screening. Packed and reconstructed posterior draws have the same
 shapes as `BMSPCov`; `diagnostics_` additionally records the screening method,
 jitter, and active/screened edge counts.
 
-The current R-derived tests establish screening and orchestration contracts.
-They do not establish end-to-end posterior equivalence. Scientific parity and
-performance claims require the separate, versioned R/Python benchmark with
-Monte Carlo uncertainty and complete runtime provenance.
+The R-derived tests establish screening and orchestration contracts and compare
+the public correlation-screened SBM posterior with a versioned `bspcov 1.0.3`
+fixture using combined Monte Carlo uncertainty. Broader scientific parity and
+performance claims still require representative datasets, dimensions, and
+complete runtime provenance.
 
 ```{toctree}
 :maxdepth: 2
 :caption: Contents
 
 installation
+api
 development
 ```

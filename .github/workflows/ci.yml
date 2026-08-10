@@ -61,3 +61,8 @@ jobs:
       - run: uv sync --locked --all-groups
       - run: uv run python -m build
       - run: uv run twine check dist/*
+      - run: uv venv --python 3.12 /tmp/pybspcov-wheel-smoke
+      - run: uv pip install --python /tmp/pybspcov-wheel-smoke/bin/python dist/*.whl
+      - run: >-
+          JAX_ENABLE_X64=0 JAX_PLATFORMS=cpu
+          /tmp/pybspcov-wheel-smoke/bin/python examples/quickstart.py

@@ -15,25 +15,36 @@ Repository: <https://github.com/kw-lee/pybspcov>
 The package provides `BMSPCov`, based on the beta-mixture shrinkage prior, and
 `SBMSPCov`, based on the screened beta-mixture shrinkage prior.
 
-The implementation uses JAX and XLA for CPU and NVIDIA GPU execution. The package
-itself will not contain custom C, C++, or CUDA extensions. It will evaluate masked
-dense and sparse GPU strategies with reproducible benchmarks.
+The implementation uses JAX and XLA for CPU and NVIDIA GPU execution. The
+package itself does not contain custom C, C++, or CUDA extensions.
 
-The default `BMSPCov` path uses `float64`. Enable JAX X64 before starting
-Python:
+## Quickstart
+
+Run both estimators on a small centered data matrix:
 
 ```bash
-JAX_ENABLE_X64=1 uv run python
+uv run python examples/quickstart.py
 ```
 
-Then fit already-centered observations with a typed JAX key:
+The example uses short float32 chains so that it serves as an installation
+smoke test, not as a scientific analysis. A complete public API call looks like:
 
 ```python
 import jax
+import jax.numpy as jnp
 from pybspcov import BMSPCov
 
-model = BMSPCov(n_samples=2_000, n_chains=4)
-model.fit(X_centered, key=jax.random.key(42))
+data_key, fit_key = jax.random.split(jax.random.key(42))
+X = jax.random.normal(data_key, shape=(100, 10), dtype=jnp.float32)
+X_centered = X - X.mean(axis=0)
+
+model = BMSPCov(
+    n_samples=1_000,
+    burnin=1_000,
+    dtype="float32",
+    device="cpu",
+)
+model.fit(X_centered, key=fit_key)
 posterior_mean = model.covariance_
 ```
 
@@ -43,6 +54,8 @@ posterior_mean = model.covariance_
 `posterior_samples_` has shape `(n_chains, n_samples, p, p)`. The
 `dtype="float32"` path is experimental and should be compared with the default
 float64 and R reference results before scientific use.
+Enable the default float64 path before Python starts with
+`JAX_ENABLE_X64=1`.
 
 `SBMSPCov` has the same input, dtype, device, key, and packed-sample contracts.
 With `device=None`, JAX selects its default device; `device="cpu"` and
@@ -56,10 +69,10 @@ from `bspcov` 1.0.3, whose FNR path draws a separate screening cutoff for each
 chain. `screening_cutoff_` is populated only for FNR screening, and
 `diagnostics_` reports active and screened edge counts.
 
-The checked-in R fixtures currently validate screening formulas and estimator
-orchestration. They do not yet constitute end-to-end posterior parity evidence;
-posterior summaries and timings must be compared in the dedicated R/Python
-benchmark before scientific equivalence or speedup is claimed.
+The checked-in R fixtures validate screening formulas, estimator orchestration,
+and the public correlation-screened SBM posterior on the upstream `p=5`
+example. This is targeted regression evidence, not a claim of universal
+scientific equivalence or speedup.
 
 ## Development installation
 
@@ -73,8 +86,15 @@ uv run python -c "import pybspcov; print(pybspcov.__version__)"
 ```
 
 For NVIDIA GPU support, use the accelerator-specific JAX installation selected
-from the [official JAX installation guide](https://docs.jax.dev/en/latest/installation.html)
-and verify it with `uv run python -c "import jax; print(jax.devices())"`.
+by the project:
+
+```bash
+uv sync --extra cuda12
+uv run python -c "import jax; print(jax.devices())"
+```
+
+Confirm driver and platform compatibility against the
+[official JAX installation guide](https://docs.jax.dev/en/latest/installation.html).
 
 ## Development
 

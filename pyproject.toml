@@ -10,7 +10,22 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "GPL-2.0-or-later"
 authors = [{ name = "Kyeongwon Lee", email = "kwlee1718@gmail.com" }]
+keywords = ["bayesian", "covariance", "jax", "mcmc", "sparse"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Mathematics",
+]
 dependencies = ["jax>=0.11.0,<0.12"]
+
+[project.urls]
+Documentation = "https://github.com/kw-lee/pybspcov/tree/main/docs"
+Issues = "https://github.com/kw-lee/pybspcov/issues"
+Repository = "https://github.com/kw-lee/pybspcov"
 
 [project.optional-dependencies]
 cuda12 = ["jax[cuda12]>=0.11.0,<0.12"]
