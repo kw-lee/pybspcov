@@ -42,6 +42,7 @@ wheels/
 benchmarks/results/local/
 benchmarks/r_example/results/*
 !benchmarks/r_example/results/.gitkeep
+benchmarks/baselines/**/*.jsonl
 
 # Documentation builds
 docs/_build/
