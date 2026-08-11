@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import numpy as np
+import pytest
 
 BENCHMARK_PATH = Path(__file__).parents[1] / "benchmarks" / "r_scaling" / "run_p200.py"
 
@@ -19,114 +21,116 @@ def _benchmark_module() -> ModuleType:
     return module
 
 
-def test_normalized_timing_matches_parallel_and_sequential_per_chain_work() -> None:
-    benchmark = _benchmark_module()
-
-    parallel = benchmark.normalize_chain_timing(
-        [40.0], execution_model="parallel", chain_count=4
-    )
-    sequential = benchmark.normalize_chain_timing(
-        [8.0, 10.0, 12.0, 10.0],
-        execution_model="sequential",
-        chain_count=4,
-    )
-
-    assert parallel == {
-        "execution_model": "parallel",
-        "raw_wall_seconds": [40.0],
-        "total_wall_seconds": 40.0,
-        "normalized_wall_seconds_per_chain": 10.0,
-        "chains_per_second": 0.1,
-    }
-    assert sequential == {
-        "execution_model": "sequential",
-        "raw_wall_seconds": [8.0, 10.0, 12.0, 10.0],
-        "total_wall_seconds": 40.0,
-        "normalized_wall_seconds_per_chain": 10.0,
-        "chains_per_second": 0.1,
-    }
-
-
-class FakeEstimator:
-    def __init__(self, configurations: list[dict[str, object]], **kwargs: object):
-        configurations.append(dict(kwargs))
-        self.n_chains = int(kwargs["n_chains"])
-        self.n_samples = int(kwargs["n_samples"])
-
-    def fit(
-        self,
-        observations: np.ndarray,
-        *,
-        key: Any,
-        initial_covariance: np.ndarray,
-    ) -> FakeEstimator:
-        del observations, key, initial_covariance
-        identity = np.eye(2, dtype=np.float64)
-        self.posterior_samples_ = np.broadcast_to(
-            identity,
-            (self.n_chains, self.n_samples, 2, 2),
-        ).copy()
-        return self
-
-
-def test_cpu_mode_normalizes_one_vmapped_four_chain_fit() -> None:
-    benchmark = _benchmark_module()
-    configurations: list[dict[str, object]] = []
-    clock_values = iter([0.0, 5.0, 10.0, 30.0])
-
-    result = benchmark.measure_python_mode(
-        np.zeros((6, 2), dtype=np.float64),
-        np.eye(2, dtype=np.float64),
-        np.eye(2, dtype=np.float64),
-        device="cpu",
-        dtype="float64",
-        burnin=3,
-        n_samples=2,
-        chain_count=4,
-        seed=11,
-        estimator_factory=lambda **kwargs: FakeEstimator(configurations, **kwargs),
-        clock=lambda: next(clock_values),
-    )
-
-    assert [configuration["n_chains"] for configuration in configurations] == [4, 4]
-    assert result["compile_plus_execution_seconds"] == 5.0
-    assert result["normalized_wall_seconds_per_chain"] == 5.0
-    assert result["chains_per_second"] == 0.2
-    assert result["retained_draws"] == 8
-    assert result["posterior_mean_spd"] is True
-
-
-def test_gpu_mode_averages_four_sequential_single_chain_fits() -> None:
-    benchmark = _benchmark_module()
-    configurations: list[dict[str, object]] = []
-    clock_values = iter([0.0, 5.0, 10.0, 18.0, 20.0, 30.0, 40.0, 52.0, 60.0, 70.0])
-
-    result = benchmark.measure_python_mode(
-        np.zeros((6, 2), dtype=np.float64),
-        np.eye(2, dtype=np.float64),
-        np.eye(2, dtype=np.float64),
-        device="gpu",
-        dtype="float64",
-        burnin=3,
-        n_samples=2,
-        chain_count=4,
-        seed=11,
-        estimator_factory=lambda **kwargs: FakeEstimator(configurations, **kwargs),
-        clock=lambda: next(clock_values),
-    )
-
-    assert [configuration["n_chains"] for configuration in configurations] == [
-        1,
-        1,
-        1,
-        1,
-        1,
+def _r_repetitions() -> list[dict[str, object]]:
+    return [
+        {
+            "repetition": index,
+            "seed": 100 + index,
+            "raw_wall_seconds": [4.0 * seconds],
+            "total_wall_seconds": 4.0 * seconds,
+            "normalized_wall_seconds_per_chain": seconds,
+            "chains_per_second": 1.0 / seconds,
+            "retained_draws": 200,
+            "posterior_mean_finite": True,
+            "posterior_mean_symmetric": True,
+            "posterior_mean_spd": True,
+            "truth_relative_frobenius_error": 0.18 + index / 1000.0,
+        }
+        for index, seconds in enumerate(np.arange(1.0, 11.0))
     ]
-    assert result["compile_plus_execution_seconds"] == 5.0
-    assert result["normalized_wall_seconds_per_chain"] == 10.0
-    assert result["chains_per_second"] == 0.1
-    assert result["retained_draws"] == 8
-    assert result["posterior_mean_spd"] is True
+
+
+def test_build_r_result_records_ten_repetitions_without_python_results() -> None:
+    """Catch reintroducing duplicate Python execution or single-run R output."""
+    benchmark = _benchmark_module()
+    fixture = {
+        "dimension": 200,
+        "n_observations": 600,
+        "density": 0.05,
+        "seed": 20260803,
+        "dtype": "float64",
+        "fixture_sha256": "a" * 64,
+    }
+
+    result = benchmark.build_r_result(
+        _r_repetitions(),
+        fixture=fixture,
+        burnin=50,
+        n_samples=50,
+        chain_count=4,
+        r_metadata={"package_version": "1.0.3"},
+    )
+
+    assert "python" not in result
+    assert result["schema_version"] == "2.0"
+    assert result["configuration"] == {
+        "burnin": 50,
+        "n_samples": 50,
+        "chain_count": 4,
+        "repetitions": 10,
+    }
+    assert len(result["r"]["measured_repetitions"]) == 10
+    assert result["r"]["timing_summary"] == {
+        "median": 5.5,
+        "q1": 3.25,
+        "q3": 7.75,
+        "min": 1.0,
+        "max": 10.0,
+    }
+    assert result["r"]["package_version"] == "1.0.3"
+
+
+def test_build_r_result_rejects_incomplete_or_invalid_repetitions() -> None:
+    """Catch publishing an R run with missing draws or invalid covariance."""
+    benchmark = _benchmark_module()
+    records = _r_repetitions()
+    records[3] = {**records[3], "retained_draws": 199}
+
+    with pytest.raises(ValueError, match="200 retained draws"):
+        benchmark.build_r_result(
+            records,
+            fixture={"fixture_sha256": "a" * 64},
+            burnin=50,
+            n_samples=50,
+            chain_count=4,
+        )
+
+
+def test_r_invocation_propagates_ten_repetitions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Catch forgetting the repeat count at the Python-to-R boundary."""
+    benchmark = _benchmark_module()
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(command: tuple[str, ...], **_: Any) -> SimpleNamespace:
+        commands.append(command)
+        return SimpleNamespace(
+            stdout=json.dumps(
+                {
+                    "metadata": {"package_version": "1.0.3"},
+                    "measured_repetitions": [],
+                }
+            )
+            + "\n"
+        )
+
+    monkeypatch.setattr(benchmark.subprocess, "run", fake_run)
+    benchmark._run_r(
+        tmp_path,
+        r_library=tmp_path / "r-library",
+        fixture_sha256="a" * 64,
+        burnin=50,
+        n_samples=50,
+        chain_count=4,
+        repetitions=10,
+        seed=20260803,
+    )
+
+    assert len(commands) == 1
+    repeat_option = commands[0].index("--repetitions")
+    assert commands[0][repeat_option + 1] == "10"
 
 
 def test_shared_fixture_export_preserves_hash_and_initial_variances(
