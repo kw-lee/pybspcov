@@ -13,7 +13,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, NamedTuple, TextIO
+from typing import Any, Literal, NamedTuple, TextIO
 
 import jax
 import jaxlib
@@ -23,7 +23,6 @@ import numpy.typing as npt
 from pybspcov import BMSPCov, SBMSPCov
 
 FloatArray = npt.NDArray[np.floating[Any]]
-MemoryProbe = Callable[[str], int]
 
 
 class ScalingFixture(NamedTuple):
@@ -124,31 +123,88 @@ def _block_public_outputs(estimator: Any) -> None:
                 blocker()
 
 
-def _timing_summary(seconds: Sequence[float]) -> dict[str, object]:
-    if not seconds or any(not np.isfinite(value) or value <= 0.0 for value in seconds):
-        raise RuntimeError("warmed fit timings must be finite positive values")
+def _distribution_summary(values: Sequence[float]) -> dict[str, float]:
+    if not values or any(not np.isfinite(value) or value <= 0.0 for value in values):
+        raise RuntimeError("timings must be finite positive values")
+    quantiles = np.quantile(np.asarray(values, dtype=np.float64), [0.25, 0.75])
     return {
-        "raw": list(seconds),
-        "median": statistics.median(seconds),
-        "min": min(seconds),
-        "max": max(seconds),
+        "median": float(statistics.median(values)),
+        "q1": float(quantiles[0]),
+        "q3": float(quantiles[1]),
+        "min": float(min(values)),
+        "max": float(max(values)),
     }
 
 
-def run_public_fit_benchmark(
+def _measured_repetition(
+    estimators: Sequence[Any],
+    raw_wall_seconds: Sequence[float],
+    truth: npt.NDArray[Any],
+    *,
+    execution_model: Literal["parallel", "sequential"],
+    chain_count: int,
+    n_samples: int,
+    repetition_index: int,
+) -> dict[str, object]:
+    total_wall_seconds = float(sum(raw_wall_seconds))
+    normalized_wall_seconds = total_wall_seconds / chain_count
+    covariance = np.mean(
+        np.stack([np.asarray(estimator.covariance_) for estimator in estimators]),
+        axis=0,
+    )
+    finite = bool(np.all(np.isfinite(covariance)))
+    symmetric = bool(np.allclose(covariance, covariance.T))
+    spd = bool(finite and symmetric and np.all(np.linalg.eigvalsh(covariance) > 0.0))
+    if not (finite and symmetric and spd):
+        raise RuntimeError("public posterior mean must be finite, symmetric, and SPD")
+
+    truth_norm = float(np.linalg.norm(truth))
+    accepted = sum(
+        int(np.count_nonzero(np.asarray(estimator.diagnostics_.accepted)))
+        for estimator in estimators
+    )
+    rejected = sum(
+        int(estimator.diagnostics_.n_rejected_sweeps) for estimator in estimators
+    )
+    return {
+        "repetition": repetition_index,
+        "execution_model": execution_model,
+        "raw_wall_seconds": [float(value) for value in raw_wall_seconds],
+        "total_wall_seconds": total_wall_seconds,
+        "normalized_wall_seconds_per_chain": normalized_wall_seconds,
+        "chains_per_second": 1.0 / normalized_wall_seconds,
+        "retained_draws": n_samples * chain_count,
+        "posterior_mean_finite": finite,
+        "posterior_mean_symmetric": symmetric,
+        "posterior_mean_spd": spd,
+        "truth_relative_frobenius_error": float(
+            np.linalg.norm(covariance - truth) / truth_norm
+        ),
+        "accepted_sweeps": accepted,
+        "rejected_sweeps": rejected,
+    }
+
+
+def run_repeated_fit_benchmark(
     observations: npt.NDArray[Any],
     truth_covariance: npt.NDArray[Any],
     *,
     estimator_factory: Callable[..., Any] = SBMSPCov,
     estimator_kwargs: Mapping[str, object],
+    execution_model: Literal["parallel", "sequential"],
+    chain_count: int,
     repetitions: int,
     seed: int,
     clock: Callable[[], float] = time.perf_counter,
-    memory_probe: MemoryProbe | None = None,
 ) -> dict[str, object]:
-    """Time fresh public estimator fits and validate the final public outputs."""
-    if repetitions < 1:
-        raise ValueError("repetitions must be positive")
+    """Compile once, then record independently keyed four-chain repetitions."""
+    if chain_count < 1 or repetitions < 1:
+        raise ValueError("chain_count and repetitions must be positive")
+    if execution_model not in {"parallel", "sequential"}:
+        raise ValueError("execution_model must be 'parallel' or 'sequential'")
+    if "n_samples" not in estimator_kwargs:
+        raise ValueError("estimator_kwargs must include n_samples")
+
     x = np.asarray(observations)
     truth = np.asarray(truth_covariance)
     if x.ndim != 2:
@@ -160,74 +216,60 @@ def run_public_fit_benchmark(
     if not np.isfinite(truth_norm) or truth_norm <= 0.0:
         raise ValueError("truth_covariance must have a finite positive norm")
 
-    memory_before = memory_probe("before") if memory_probe is not None else None
-    fit_keys = jax.random.split(jax.random.key(seed), repetitions + 1)
-    estimators: list[Any] = []
-    first_fit_seconds: float | None = None
-    timings: list[float] = []
-    for fit_index, key in enumerate(fit_keys):
-        estimator = estimator_factory(**dict(estimator_kwargs))
-        start = clock()
-        fitted = estimator.fit(x, key=key)
-        _block_public_outputs(fitted)
-        elapsed = clock() - start
-        if not np.isfinite(elapsed) or elapsed <= 0.0:
-            raise RuntimeError("fit timings must be finite positive values")
-        estimators.append(fitted)
-        if fit_index == 0:
-            first_fit_seconds = elapsed
-        else:
-            timings.append(elapsed)
+    estimator_chain_count = chain_count if execution_model == "parallel" else 1
+    configuration = dict(estimator_kwargs)
+    configuration["n_chains"] = estimator_chain_count
+    repetition_keys = jax.random.split(jax.random.key(seed), repetitions + 1)
 
-    memory_after = memory_probe("after") if memory_probe is not None else None
-    memory_peak = memory_probe("peak") if memory_probe is not None else None
-    final = estimators[-1]
-    covariance = np.asarray(final.covariance_)
-    finite = bool(np.all(np.isfinite(covariance)))
-    symmetric = bool(np.allclose(covariance, covariance.T))
-    spd = bool(finite and symmetric and np.all(np.linalg.eigvalsh(covariance) > 0.0))
-    if not (finite and symmetric and spd):
-        raise RuntimeError(
-            "public SBM posterior mean must be finite, symmetric, and SPD"
+    compile_estimator = estimator_factory(**configuration)
+    compile_start = clock()
+    compiled = compile_estimator.fit(x, key=repetition_keys[0])
+    _block_public_outputs(compiled)
+    compile_seconds = clock() - compile_start
+    if not np.isfinite(compile_seconds) or compile_seconds <= 0.0:
+        raise RuntimeError("compile timing must be finite and positive")
+
+    measured_repetitions: list[dict[str, object]] = []
+    for repetition_index, repetition_key in enumerate(repetition_keys[1:]):
+        fit_keys = (
+            [repetition_key]
+            if execution_model == "parallel"
+            else list(jax.random.split(repetition_key, chain_count))
         )
-
-    accepted = np.asarray(final.diagnostics_.accepted, dtype=np.bool_)
-    screening_mask = getattr(final, "screening_mask_", None)
-    compact_width = (
-        int(
-            np.max(
-                np.count_nonzero(np.asarray(screening_mask, dtype=np.bool_), axis=0),
-                initial=0,
+        estimators: list[Any] = []
+        raw_wall_seconds: list[float] = []
+        for fit_key in fit_keys:
+            estimator = estimator_factory(**configuration)
+            start = clock()
+            fitted = estimator.fit(x, key=fit_key)
+            _block_public_outputs(fitted)
+            elapsed = clock() - start
+            if not np.isfinite(elapsed) or elapsed <= 0.0:
+                raise RuntimeError("fit timings must be finite positive values")
+            estimators.append(fitted)
+            raw_wall_seconds.append(float(elapsed))
+        measured_repetitions.append(
+            _measured_repetition(
+                estimators,
+                raw_wall_seconds,
+                truth,
+                execution_model=execution_model,
+                chain_count=chain_count,
+                n_samples=int(estimator_kwargs["n_samples"]),
+                repetition_index=repetition_index,
             )
         )
-        if screening_mask is not None
-        else None
-    )
-    dtype_name = str(np.dtype(final.dtype_))
-    relative_error = float(np.linalg.norm(covariance - truth) / truth_norm)
-    if first_fit_seconds is None:
-        raise RuntimeError("the first fit timing was not recorded")
+
+    normalized_timings = [
+        float(repetition["normalized_wall_seconds_per_chain"])
+        for repetition in measured_repetitions
+    ]
     return {
-        "first_fit_seconds": first_fit_seconds,
-        "warmed_fit_seconds": _timing_summary(timings),
-        "posterior_mean_finite": finite,
-        "posterior_mean_symmetric": symmetric,
-        "posterior_mean_spd": spd,
-        "dtype": dtype_name,
-        "accepted_sweeps": int(np.count_nonzero(accepted)),
-        "rejected_sweeps": int(final.diagnostics_.n_rejected_sweeps),
-        "active_edges": (
-            int(final.diagnostics_.n_active_edges)
-            if hasattr(final.diagnostics_, "n_active_edges")
-            else None
-        ),
-        "compact_width": compact_width,
-        "truth_relative_frobenius_error": relative_error,
-        "device_memory_bytes": (
-            {"before": memory_before, "after": memory_after, "peak": memory_peak}
-            if memory_probe is not None
-            else None
-        ),
+        "compile_plus_execution_seconds": float(compile_seconds),
+        "execution_model": execution_model,
+        "chain_count": chain_count,
+        "measured_repetitions": measured_repetitions,
+        "timing_summary": _distribution_summary(normalized_timings),
     }
 
 
@@ -291,9 +333,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--density", type=float, default=0.05)
     parser.add_argument("--n-factor", type=int, default=3)
-    parser.add_argument("--burnin", type=int, default=1)
-    parser.add_argument("--samples", type=int, default=2)
-    parser.add_argument("--repetitions", type=int, default=5)
+    parser.add_argument("--burnin", type=int, default=50)
+    parser.add_argument("--samples", type=int, default=50)
+    parser.add_argument("--chains", type=int, default=4)
+    parser.add_argument("--repetitions", type=int, default=10)
     parser.add_argument("--seed", type=int, default=20260803)
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args(argv)
@@ -305,8 +348,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--n-factor must be positive")
     if arguments.burnin < 0:
         parser.error("--burnin must be non-negative")
-    if arguments.samples < 1 or arguments.repetitions < 1:
-        parser.error("--samples and --repetitions must be positive")
+    if arguments.samples < 1 or arguments.chains < 1 or arguments.repetitions < 1:
+        parser.error("--samples, --chains, and --repetitions must be positive")
     if arguments.dtype == "float64" and not jax.config.x64_enabled:
         parser.error("float64 requires JAX_ENABLE_X64=1")
     return arguments
@@ -322,7 +365,6 @@ def main(argv: Sequence[str] | None = None, *, stdout: TextIO | None = None) -> 
     estimator_kwargs: dict[str, object] = {
         "burnin": arguments.burnin,
         "n_samples": arguments.samples,
-        "n_chains": 1,
         "dtype": arguments.dtype,
         "device": arguments.device,
     }
@@ -349,26 +391,31 @@ def main(argv: Sequence[str] | None = None, *, stdout: TextIO | None = None) -> 
                 density=arguments.density,
                 n_observations=n_observations,
                 seed=arguments.seed,
-                dtype=arguments.dtype,
+                dtype="float64",
             )
-            summary = run_public_fit_benchmark(
-                fixture.observations,
-                fixture.covariance,
+            value_dtype = np.dtype(arguments.dtype)
+            summary = run_repeated_fit_benchmark(
+                np.asarray(fixture.observations, dtype=value_dtype),
+                np.asarray(fixture.covariance, dtype=value_dtype),
                 estimator_factory=estimator_factory,
                 estimator_kwargs=estimator_kwargs,
+                execution_model=(
+                    "parallel" if arguments.device == "cpu" else "sequential"
+                ),
+                chain_count=arguments.chains,
                 repetitions=arguments.repetitions,
                 seed=arguments.seed,
-                memory_probe=None,
             )
             record = {
                 "benchmark": f"{arguments.estimator}-public-scaling",
-                "schema_version": "1.0",
+                "schema_version": "2.0",
                 "estimator": arguments.estimator,
                 "dimension": dimension,
                 "density": arguments.density,
                 "n_observations": n_observations,
                 "burnin": arguments.burnin,
                 "samples": arguments.samples,
+                "chain_count": arguments.chains,
                 "repetitions": arguments.repetitions,
                 "seed": arguments.seed,
                 "device": arguments.device,
