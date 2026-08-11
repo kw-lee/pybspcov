@@ -426,6 +426,7 @@ def main(argv: Sequence[str] | None = None, *, stdout: TextIO | None = None) -> 
                 **summary,
             }
             print(json.dumps(record, sort_keys=True), file=output_handle)
+            output_handle.flush()
     finally:
         if close_output:
             output_handle.close()
