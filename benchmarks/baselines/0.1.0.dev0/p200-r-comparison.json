@@ -1,0 +1,145 @@
+{
+  "benchmark": "p200-r-bm-comparison",
+  "configuration": {
+    "burnin": 50,
+    "chain_count": 4,
+    "n_samples": 50,
+    "seed": 20260803
+  },
+  "environment": {
+    "jax": "0.11.0",
+    "numpy": "2.5.1",
+    "platform": "Linux-6.8.0-60-generic-x86_64-with-glibc2.39",
+    "pybspcov": "0.1.0.dev0",
+    "python": "3.13.6"
+  },
+  "fixture": {
+    "density": 0.05,
+    "dimension": 200,
+    "dtype": "float64",
+    "fixture_sha256": "311ee78bfe00c2c1088021e3fce099744bf8c714ffc627b51a1dea72b5e473aa",
+    "n_observations": 600,
+    "seed": 20260803
+  },
+  "git": {
+    "dirty": false,
+    "revision": "f745328edafd44959bf0946e90a491543895f586"
+  },
+  "python": [
+    {
+      "burnin": 50,
+      "chain_count": 4,
+      "chains_per_second": 0.008625851423705517,
+      "compile_plus_execution_seconds": 470.4273880161345,
+      "device": "cpu",
+      "dtype": "float64",
+      "execution_model": "parallel",
+      "implementation": "pybspcov",
+      "n_samples": 50,
+      "normalized_wall_seconds_per_chain": 115.93058480601758,
+      "posterior_mean_finite": true,
+      "posterior_mean_spd": true,
+      "posterior_mean_symmetric": true,
+      "raw_wall_seconds": [
+        463.7223392240703
+      ],
+      "retained_draws": 200,
+      "total_wall_seconds": 463.7223392240703,
+      "truth_relative_frobenius_error": 0.18140884055694934
+    },
+    {
+      "burnin": 50,
+      "chain_count": 4,
+      "chains_per_second": 0.006026155696282719,
+      "compile_plus_execution_seconds": 186.32224869728088,
+      "device": "gpu",
+      "dtype": "float64",
+      "execution_model": "sequential",
+      "implementation": "pybspcov",
+      "n_samples": 50,
+      "normalized_wall_seconds_per_chain": 165.9432730250992,
+      "posterior_mean_finite": true,
+      "posterior_mean_spd": true,
+      "posterior_mean_symmetric": true,
+      "raw_wall_seconds": [
+        166.02677210234106,
+        165.94530232064426,
+        165.9073123075068,
+        165.89370536990464
+      ],
+      "retained_draws": 200,
+      "total_wall_seconds": 663.7730921003968,
+      "truth_relative_frobenius_error": 0.18158163475849665
+    },
+    {
+      "burnin": 50,
+      "chain_count": 4,
+      "chains_per_second": 0.010133942911228142,
+      "compile_plus_execution_seconds": 403.04118082486093,
+      "device": "cpu",
+      "dtype": "float32",
+      "execution_model": "parallel",
+      "implementation": "pybspcov",
+      "n_samples": 50,
+      "normalized_wall_seconds_per_chain": 98.67827446432784,
+      "posterior_mean_finite": true,
+      "posterior_mean_spd": true,
+      "posterior_mean_symmetric": true,
+      "raw_wall_seconds": [
+        394.71309785731137
+      ],
+      "retained_draws": 200,
+      "total_wall_seconds": 394.71309785731137,
+      "truth_relative_frobenius_error": 0.17997488416166849
+    },
+    {
+      "burnin": 50,
+      "chain_count": 4,
+      "chains_per_second": 0.012459435494655351,
+      "compile_plus_execution_seconds": 95.62109107151628,
+      "device": "gpu",
+      "dtype": "float32",
+      "execution_model": "sequential",
+      "implementation": "pybspcov",
+      "n_samples": 50,
+      "normalized_wall_seconds_per_chain": 80.2604580624029,
+      "posterior_mean_finite": true,
+      "posterior_mean_spd": true,
+      "posterior_mean_symmetric": true,
+      "raw_wall_seconds": [
+        79.94618216715753,
+        80.35128014348447,
+        80.35497686639428,
+        80.38939307257533
+      ],
+      "retained_draws": 200,
+      "total_wall_seconds": 321.0418322496116,
+      "truth_relative_frobenius_error": 0.18146761927175897
+    }
+  ],
+  "r": {
+    "burnin": 50,
+    "chain_count": 4,
+    "chains_per_second": 0.00819460549120514,
+    "device": "cpu",
+    "dtype": "float64",
+    "execution_model": "parallel",
+    "fixture_sha256": "311ee78bfe00c2c1088021e3fce099744bf8c714ffc627b51a1dea72b5e473aa",
+    "implementation": "bspcov",
+    "n_samples": 50,
+    "normalized_wall_seconds_per_chain": 122.0315,
+    "package_version": "1.0.3",
+    "platform": "x86_64-pc-linux-gnu",
+    "posterior_mean_finite": true,
+    "posterior_mean_spd": true,
+    "posterior_mean_symmetric": true,
+    "r_version": "R version 4.5.0 (2025-04-11)",
+    "raw_wall_seconds": [
+      488.126
+    ],
+    "retained_draws": 200,
+    "total_wall_seconds": 488.126,
+    "truth_relative_frobenius_error": 0.1814393710093353
+  },
+  "schema_version": "1.0"
+}

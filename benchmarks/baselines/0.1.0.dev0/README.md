@@ -34,6 +34,34 @@ on CPU; GPU values agree to the displayed precision.
 | SBM | 100 | 0.376 | 1.035 | 0.363x | 0.423 | 1.806 | 0.234x | 0.1961 | 0.1949 |
 | SBM | 200 | 2.040 | 2.115 | 0.965x | 2.326 | 3.830 | 0.607x | 0.1885 | 0.1871 |
 
+## p=200 comparison with R
+
+This longer BM run compares `bspcov` 1.0.3 with `pybspcov` on the same
+`p=200`, `n=600` float64 fixture. Each result retains 50 samples after 50
+burn-in iterations from each of four chains. R used four parallel workers,
+Python CPU used one vmapped four-chain fit, and Python GPU ran four single-chain
+fits sequentially as required by the protocol.
+
+The primary timing is normalized wall time per chain: total wall time divided
+by four for the parallel or vmapped runs, and the arithmetic mean of the four
+single-chain wall times for GPU. Python compilation is excluded from these
+steady-state values. R-relative speedup is `R wall/chain` divided by the row's
+`wall/chain`; values above 1.0 are faster than R.
+
+| Implementation | Device | Dtype | Execution | Total wall (s) | Wall / chain (s) | Chains / s | R-relative speedup | Truth-relative error |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| bspcov 1.0.3 | CPU | float64 | 4 parallel workers | 488.126 | 122.032 | 0.00819 | 1.000x | 0.18144 |
+| pybspcov | CPU | float64 | 4-chain vmap | 463.722 | 115.931 | 0.00863 | 1.053x | 0.18141 |
+| pybspcov | GPU | float64 | 4 sequential fits | 663.773 | 165.943 | 0.00603 | 0.735x | 0.18158 |
+| pybspcov | CPU | float32 | 4-chain vmap | 394.713 | 98.678 | 0.01013 | 1.237x | 0.17997 |
+| pybspcov | GPU | float32 | 4 sequential fits | 321.042 | 80.260 | 0.01246 | 1.520x | 0.18147 |
+
+All five posterior means were finite, symmetric, and positive definite. Their
+truth-relative errors differ by at most 0.00161 in this run. Float32 GPU had
+the best normalized throughput, while float64 GPU was slower than both R and
+Python CPU. This is performance and numerical-sanity evidence for one fixture,
+not a convergence or posterior-equivalence claim.
+
 ### First fit, including compilation
 
 | Estimator | p | CPU f32 | GPU f32 | CPU f64 | GPU f64 |
@@ -61,6 +89,10 @@ on CPU; GPU values agree to the displayed precision.
 - Each fit used a fresh estimator and PRNG key. All public outputs were
   synchronized before stopping the timer. The first fit and three warmed fits
   were recorded separately.
+- The R comparison used `bspcov` 1.0.3, burn-in 50, retained samples 50, and
+  four chains. The Python compile-plus-execution measurements were recorded
+  separately in `p200-r-comparison.json`; R worker startup remains included in
+  its measured `bmspcov()` call.
 
 The following command template produced each JSONL file. Substitute the
 estimator, backend, dtype, X64 flag, and output filename. GPU runs also add
@@ -77,9 +109,10 @@ JAX_PLATFORMS=cpu JAX_ENABLE_X64=0 uv run --frozen python \
 
 ## Files and limitations
 
-The eight adjacent JSONL files contain four dimension records each, raw
-timings, min/max ranges, fixture hashes, validity checks, and runtime
-provenance. They are the authoritative values; this report rounds numbers for
+The eight adjacent JSONL files contain four dimension records each. The
+adjacent `p200-r-comparison.json` contains the longer R comparison. These raw
+files include timings, fixture hashes, validity checks, and runtime provenance;
+they are the authoritative values, while this report rounds numbers for
 readability.
 
 This is one run on one dual-socket server. CPU affinity, NUMA placement, power

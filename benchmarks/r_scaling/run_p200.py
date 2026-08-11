@@ -18,7 +18,8 @@ import jax
 import numpy as np
 import numpy.typing as npt
 
-from pybspcov import BMSPCov, __version__ as pybspcov_version
+from pybspcov import BMSPCov
+from pybspcov import __version__ as pybspcov_version
 
 ExecutionModel = Literal["parallel", "sequential"]
 EstimatorFactory = Callable[..., Any]
@@ -32,7 +33,7 @@ def _generate_fixture(**kwargs: object) -> Any:
         raise RuntimeError(f"cannot load scaling fixture generator from {scaling_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return getattr(module, "generate_fixture")(**kwargs)
+    return module.generate_fixture(**kwargs)
 
 
 def normalize_chain_timing(
@@ -118,9 +119,7 @@ def _posterior_summary(draws: FloatArray, truth: FloatArray) -> dict[str, object
     finite = bool(np.all(np.isfinite(posterior_mean)))
     symmetric = bool(np.allclose(posterior_mean, posterior_mean.T))
     spd = bool(
-        finite
-        and symmetric
-        and np.all(np.linalg.eigvalsh(posterior_mean) > 0.0)
+        finite and symmetric and np.all(np.linalg.eigvalsh(posterior_mean) > 0.0)
     )
     truth_norm = float(np.linalg.norm(truth))
     error = float(np.linalg.norm(posterior_mean - truth) / truth_norm)
@@ -267,7 +266,7 @@ def _run_r(
         raise RuntimeError("R runner produced no JSON output")
     parsed = json.loads(lines[-1])
     if not isinstance(parsed, dict):
-        raise RuntimeError("R runner output must be a JSON object")
+        raise TypeError("R runner output must be a JSON object")
     return parsed
 
 
@@ -302,12 +301,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             n_observations=arguments.dimension * arguments.n_factor,
             seed=arguments.seed,
         )
-        observations = np.loadtxt(
-            fixture_directory / "observations.csv", delimiter=","
-        )
-        truth = np.loadtxt(
-            fixture_directory / "truth_covariance.csv", delimiter=","
-        )
+        observations = np.loadtxt(fixture_directory / "observations.csv", delimiter=",")
+        truth = np.loadtxt(fixture_directory / "truth_covariance.csv", delimiter=",")
         initial = np.loadtxt(
             fixture_directory / "initial_covariance.csv", delimiter=","
         )

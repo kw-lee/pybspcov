@@ -7,9 +7,7 @@ from typing import Any
 
 import numpy as np
 
-BENCHMARK_PATH = (
-    Path(__file__).parents[1] / "benchmarks" / "r_scaling" / "run_p200.py"
-)
+BENCHMARK_PATH = Path(__file__).parents[1] / "benchmarks" / "r_scaling" / "run_p200.py"
 
 
 def _benchmark_module() -> ModuleType:
