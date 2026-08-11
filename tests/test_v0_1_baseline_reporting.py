@@ -176,6 +176,32 @@ def test_lane_commands_pin_cpu_and_gpu_to_separate_numa_nodes(tmp_path: Path) ->
     assert "--repetitions" in lanes.r
 
 
+def test_main_preserves_virtualenv_python_symlink(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Catch resolving a venv Python to a base interpreter without dependencies."""
+    orchestrator = _load_module(ORCHESTRATOR_PATH, "run_v0_1_baseline")
+    venv_python = tmp_path / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(Path(orchestrator.sys.executable).resolve())
+    captured: list[object] = []
+    monkeypatch.setattr(orchestrator.sys, "executable", str(venv_python))
+    monkeypatch.setattr(orchestrator, "run", captured.append)
+
+    orchestrator.main(
+        [
+            "--output-dir",
+            str(tmp_path / "output"),
+            "--r-library",
+            str(tmp_path / "r-library"),
+        ]
+    )
+
+    assert len(captured) == 1
+    assert captured[0].python_executable == venv_python
+
+
 def test_renderer_requires_all_32_long_chain_cells_and_ten_runs() -> None:
     """Catch accepting missing cells, old short chains, or fewer repetitions."""
     renderer = _load_module(RENDERER_PATH, "render_v0_1_baseline")
