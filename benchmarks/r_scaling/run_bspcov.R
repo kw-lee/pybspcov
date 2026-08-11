@@ -66,7 +66,11 @@ fit_wall_seconds <- system.time({
   )
 })[["elapsed"]]
 
-draws <- as.matrix(fit$Sigma)
+draws <- if (is.list(fit$Sigma)) {
+  do.call(rbind, fit$Sigma)
+} else {
+  as.matrix(fit$Sigma)
+}
 expected_draws <- n_samples * chain_count
 if (nrow(draws) != expected_draws) {
   stop(
