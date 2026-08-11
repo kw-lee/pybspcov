@@ -1,4 +1,4 @@
-"""Compare p=200 BM chain throughput with R bspcov on one shared fixture."""
+"""Run repeated p=200 BM fits with R bspcov on a shared fixture."""
 
 from __future__ import annotations
 
@@ -7,28 +7,23 @@ import importlib.util
 import json
 import os
 import platform
+import statistics
 import subprocess
 import tempfile
-import time
-from collections.abc import Callable, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
-import jax
 import numpy as np
-import numpy.typing as npt
-
-from pybspcov import BMSPCov
-from pybspcov import __version__ as pybspcov_version
-
-ExecutionModel = Literal["parallel", "sequential"]
-EstimatorFactory = Callable[..., Any]
-FloatArray = npt.NDArray[np.floating[Any]]
 
 
 def _generate_fixture(**kwargs: object) -> Any:
-    scaling_path = Path(__file__).parents[1] / "sbm_public_scaling.py"
-    spec = importlib.util.spec_from_file_location("sbm_public_scaling", scaling_path)
+    project_root = Path(__file__).resolve().parents[2]
+    scaling_path = project_root / "benchmarks" / "sbm_public_scaling.py"
+    spec = importlib.util.spec_from_file_location(
+        "pybspcov_scaling_fixture",
+        scaling_path,
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load scaling fixture generator from {scaling_path}")
     module = importlib.util.module_from_spec(spec)
@@ -36,43 +31,15 @@ def _generate_fixture(**kwargs: object) -> Any:
     return module.generate_fixture(**kwargs)
 
 
-def normalize_chain_timing(
-    wall_seconds: Sequence[float],
-    *,
-    execution_model: ExecutionModel,
-    chain_count: int,
-) -> dict[str, object]:
-    """Normalize parallel-total or sequential-per-chain wall measurements."""
-    if chain_count < 1:
-        raise ValueError("chain_count must be positive")
-    timings = [float(value) for value in wall_seconds]
-    expected_count = 1 if execution_model == "parallel" else chain_count
-    if len(timings) != expected_count:
-        raise ValueError(
-            f"{execution_model} timing requires {expected_count} wall measurement(s)"
-        )
-    if any(not np.isfinite(value) or value <= 0.0 for value in timings):
-        raise ValueError("wall measurements must be finite and positive")
-    total = float(sum(timings))
-    normalized = total / chain_count
-    return {
-        "execution_model": execution_model,
-        "raw_wall_seconds": timings,
-        "total_wall_seconds": total,
-        "normalized_wall_seconds_per_chain": normalized,
-        "chains_per_second": 1.0 / normalized,
-    }
-
-
 def write_shared_fixture(
-    output_directory: Path,
+    directory: Path,
     *,
     dimension: int,
     density: float,
     n_observations: int,
     seed: int,
 ) -> dict[str, object]:
-    """Write one exact float64 scaling fixture for both Python and R."""
+    """Write one canonical float64 fixture for R and Python comparisons."""
     fixture = _generate_fixture(
         dimension=dimension,
         density=density,
@@ -83,21 +50,11 @@ def write_shared_fixture(
     observations = np.asarray(fixture.observations, dtype=np.float64)
     truth = np.asarray(fixture.covariance, dtype=np.float64)
     initial = np.diag(np.var(observations, axis=0, ddof=1))
-    output_directory.mkdir(parents=True, exist_ok=True)
+    directory.mkdir(parents=True, exist_ok=True)
+    np.savetxt(directory / "observations.csv", observations, delimiter=",", fmt="%.17g")
+    np.savetxt(directory / "truth_covariance.csv", truth, delimiter=",", fmt="%.17g")
     np.savetxt(
-        output_directory / "observations.csv",
-        observations,
-        delimiter=",",
-        fmt="%.17g",
-    )
-    np.savetxt(
-        output_directory / "truth_covariance.csv",
-        truth,
-        delimiter=",",
-        fmt="%.17g",
-    )
-    np.savetxt(
-        output_directory / "initial_covariance.csv",
+        directory / "initial_covariance.csv",
         initial,
         delimiter=",",
         fmt="%.17g",
@@ -112,94 +69,90 @@ def write_shared_fixture(
     }
 
 
-def _posterior_summary(draws: FloatArray, truth: FloatArray) -> dict[str, object]:
-    dimension = truth.shape[0]
-    flattened = np.asarray(draws).reshape(-1, dimension, dimension)
-    posterior_mean = np.mean(flattened, axis=0)
-    finite = bool(np.all(np.isfinite(posterior_mean)))
-    symmetric = bool(np.allclose(posterior_mean, posterior_mean.T))
-    spd = bool(
-        finite and symmetric and np.all(np.linalg.eigvalsh(posterior_mean) > 0.0)
-    )
-    truth_norm = float(np.linalg.norm(truth))
-    error = float(np.linalg.norm(posterior_mean - truth) / truth_norm)
+def _distribution_summary(values: Sequence[float]) -> dict[str, float]:
+    if not values or any(not np.isfinite(value) or value <= 0.0 for value in values):
+        raise ValueError("normalized timings must be finite positive values")
+    q1, q3 = np.quantile(np.asarray(values, dtype=np.float64), [0.25, 0.75])
     return {
-        "retained_draws": int(flattened.shape[0]),
-        "posterior_mean_finite": finite,
-        "posterior_mean_symmetric": symmetric,
-        "posterior_mean_spd": spd,
-        "truth_relative_frobenius_error": error,
+        "median": float(statistics.median(values)),
+        "q1": float(q1),
+        "q3": float(q3),
+        "min": float(min(values)),
+        "max": float(max(values)),
     }
 
 
-def measure_python_mode(
-    observations: FloatArray,
-    truth: FloatArray,
-    initial_covariance: FloatArray,
+def build_r_result(
+    repetition_records: Sequence[Mapping[str, object]],
     *,
-    device: Literal["cpu", "gpu"],
-    dtype: Literal["float32", "float64"],
+    fixture: Mapping[str, object],
     burnin: int,
     n_samples: int,
     chain_count: int,
-    seed: int,
-    estimator_factory: EstimatorFactory = BMSPCov,
-    clock: Callable[[], float] = time.perf_counter,
+    r_metadata: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    """Measure one vmapped CPU fit or sequential single-chain GPU fits."""
-    estimator_chains = chain_count if device == "cpu" else 1
+    """Validate repeated R measurements and build an R-only result document."""
+    if not repetition_records:
+        raise ValueError("at least one R repetition is required")
+    expected_draws = n_samples * chain_count
+    normalized_timings: list[float] = []
+    validated: list[dict[str, object]] = []
+    for expected_index, source in enumerate(repetition_records):
+        record = dict(source)
+        if int(record.get("repetition", -1)) != expected_index:
+            raise ValueError("R repetition indices must be contiguous from zero")
+        if int(record.get("retained_draws", -1)) != expected_draws:
+            raise ValueError(
+                f"each R repetition must contain {expected_draws} retained draws"
+            )
+        if not all(
+            record.get(field) is True
+            for field in (
+                "posterior_mean_finite",
+                "posterior_mean_symmetric",
+                "posterior_mean_spd",
+            )
+        ):
+            raise ValueError("each R repetition must have a valid posterior mean")
+        total = float(record["total_wall_seconds"])
+        normalized = float(record["normalized_wall_seconds_per_chain"])
+        if not np.isclose(normalized, total / chain_count, rtol=1e-12, atol=0.0):
+            raise ValueError(
+                "R normalized wall time must equal total wall time / chains"
+            )
+        if not np.isclose(
+            float(record["chains_per_second"]),
+            1.0 / normalized,
+            rtol=1e-12,
+            atol=0.0,
+        ):
+            raise ValueError("R throughput must be the reciprocal normalized time")
+        normalized_timings.append(normalized)
+        validated.append(record)
 
-    def fit_once(key_seed: int) -> FloatArray:
-        fitted = estimator_factory(
-            n_samples=n_samples,
-            burnin=burnin,
-            n_chains=estimator_chains,
-            dtype=dtype,
-            device=device,
-        ).fit(
-            observations,
-            key=jax.random.key(key_seed),
-            initial_covariance=initial_covariance,
-        )
-        return np.asarray(fitted.posterior_samples_)
-
-    compile_start = clock()
-    fit_once(seed)
-    compile_seconds = clock() - compile_start
-
-    if device == "cpu":
-        measured_start = clock()
-        draws = fit_once(seed + 1)
-        measured_seconds = clock() - measured_start
-        timing = normalize_chain_timing(
-            [measured_seconds],
-            execution_model="parallel",
-            chain_count=chain_count,
-        )
-    else:
-        chain_draws = []
-        wall_seconds = []
-        for chain_index in range(chain_count):
-            measured_start = clock()
-            chain_draws.append(fit_once(seed + chain_index + 1))
-            wall_seconds.append(clock() - measured_start)
-        draws = np.concatenate(chain_draws, axis=0)
-        timing = normalize_chain_timing(
-            wall_seconds,
-            execution_model="sequential",
-            chain_count=chain_count,
-        )
-
+    r_result: dict[str, object] = {
+        "implementation": "bspcov",
+        "device": "cpu",
+        "dtype": "float64",
+        "execution_model": "parallel",
+    }
+    if r_metadata is not None:
+        r_result.update(dict(r_metadata))
+    r_result.update(
+        measured_repetitions=validated,
+        timing_summary=_distribution_summary(normalized_timings),
+    )
     return {
-        "implementation": "pybspcov",
-        "device": device,
-        "dtype": dtype,
-        "burnin": burnin,
-        "n_samples": n_samples,
-        "chain_count": chain_count,
-        "compile_plus_execution_seconds": float(compile_seconds),
-        **timing,
-        **_posterior_summary(draws, truth),
+        "benchmark": "p200-r-bm-comparison",
+        "schema_version": "2.0",
+        "fixture": dict(fixture),
+        "configuration": {
+            "burnin": burnin,
+            "n_samples": n_samples,
+            "chain_count": chain_count,
+            "repetitions": len(validated),
+        },
+        "r": r_result,
     }
 
 
@@ -234,6 +187,7 @@ def _run_r(
     burnin: int,
     n_samples: int,
     chain_count: int,
+    repetitions: int,
     seed: int,
 ) -> dict[str, object]:
     environment = os.environ.copy()
@@ -253,6 +207,8 @@ def _run_r(
             str(n_samples),
             "--n-chains",
             str(chain_count),
+            "--repetitions",
+            str(repetitions),
             "--seed",
             str(seed),
         ),
@@ -280,12 +236,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--burnin", type=int, default=50)
     parser.add_argument("--n-samples", type=int, default=50)
     parser.add_argument("--n-chains", type=int, default=4)
+    parser.add_argument("--repetitions", type=int, default=10)
     parser.add_argument("--seed", type=int, default=20260803)
     arguments = parser.parse_args(argv)
     if arguments.dimension < 2 or arguments.n_factor < 1:
         parser.error("dimension must be at least two and n-factor must be positive")
-    if arguments.burnin < 0 or arguments.n_samples < 1 or arguments.n_chains < 1:
-        parser.error("burnin must be non-negative; samples and chains must be positive")
+    if (
+        arguments.burnin < 0
+        or arguments.n_samples < 1
+        or arguments.n_chains < 1
+        or arguments.repetitions < 1
+    ):
+        parser.error(
+            "burnin must be non-negative; samples, chains, and repetitions must be positive"
+        )
     return arguments
 
 
@@ -301,60 +265,34 @@ def main(argv: Sequence[str] | None = None) -> None:
             n_observations=arguments.dimension * arguments.n_factor,
             seed=arguments.seed,
         )
-        observations = np.loadtxt(fixture_directory / "observations.csv", delimiter=",")
-        truth = np.loadtxt(fixture_directory / "truth_covariance.csv", delimiter=",")
-        initial = np.loadtxt(
-            fixture_directory / "initial_covariance.csv", delimiter=","
-        )
-        r_result = _run_r(
+        raw = _run_r(
             fixture_directory,
             r_library=arguments.r_library,
             fixture_sha256=str(fixture["fixture_sha256"]),
             burnin=arguments.burnin,
             n_samples=arguments.n_samples,
             chain_count=arguments.n_chains,
+            repetitions=arguments.repetitions,
             seed=arguments.seed,
         )
-        python_results = [
-            measure_python_mode(
-                observations,
-                truth,
-                initial,
-                device=device,
-                dtype=dtype,
-                burnin=arguments.burnin,
-                n_samples=arguments.n_samples,
-                chain_count=arguments.n_chains,
-                seed=arguments.seed,
-            )
-            for device, dtype in (
-                ("cpu", "float64"),
-                ("gpu", "float64"),
-                ("cpu", "float32"),
-                ("gpu", "float32"),
-            )
-        ]
 
-    output = {
-        "benchmark": "p200-r-bm-comparison",
-        "schema_version": "1.0",
-        "fixture": fixture,
-        "configuration": {
-            "burnin": arguments.burnin,
-            "n_samples": arguments.n_samples,
-            "chain_count": arguments.n_chains,
-            "seed": arguments.seed,
-        },
-        "git": _git_provenance(project_root),
-        "environment": {
-            "python": platform.python_version(),
-            "pybspcov": pybspcov_version,
-            "jax": jax.__version__,
-            "numpy": np.__version__,
-            "platform": platform.platform(),
-        },
-        "r": r_result,
-        "python": python_results,
+    metadata = raw.get("metadata")
+    repetitions = raw.get("measured_repetitions")
+    if not isinstance(metadata, dict) or not isinstance(repetitions, list):
+        raise TypeError("R runner must return metadata and measured_repetitions")
+    output = build_r_result(
+        repetitions,
+        fixture=fixture,
+        burnin=arguments.burnin,
+        n_samples=arguments.n_samples,
+        chain_count=arguments.n_chains,
+        r_metadata=metadata,
+    )
+    output["git"] = _git_provenance(project_root)
+    output["environment"] = {
+        "python": platform.python_version(),
+        "numpy": np.__version__,
+        "platform": platform.platform(),
     }
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(
