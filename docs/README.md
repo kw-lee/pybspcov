@@ -28,3 +28,27 @@ kept out of the ordinary documentation build.
 
 See [Development Workflow](development/workflow.md) for branch, worktree,
 parallel-development, and integration rules.
+
+## Versioned GitHub Pages build
+
+The Pages workflow rebuilds one artifact from the complete Git history whenever
+`main`, a `feat/**` branch, or a `v*` tag is pushed. Published documentation is
+available at these stable paths:
+
+- `main` at `/pybspcov/main/`
+- feature branches at `/pybspcov/branches/feat/<branch-name>/`
+- release tags at `/pybspcov/versions/<tag>/`
+
+The site root redirects to the `main` documentation. Each version built with
+the current Sphinx configuration also exposes the available branches and tags
+in the Furo sidebar.
+
+To reproduce the Pages artifact from a full clone:
+
+```bash
+uv sync --locked --all-groups
+uv run sphinx-polyversion --sequential docs/poly.py docs/_build/html
+```
+
+The multi-version build selects `origin/main`, public `origin/feat/**` branches,
+and local semantic-version tags such as `v1.2.3`.

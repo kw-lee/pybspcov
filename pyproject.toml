@@ -23,7 +23,7 @@ classifiers = [
 dependencies = ["jax>=0.11.0,<0.12"]
 
 [project.urls]
-Documentation = "https://github.com/kw-lee/pybspcov/tree/main/docs"
+Documentation = "https://kw-lee.github.io/pybspcov/"
 Issues = "https://github.com/kw-lee/pybspcov/issues"
 Repository = "https://github.com/kw-lee/pybspcov"
 
@@ -47,6 +47,7 @@ docs = [
   "furo>=2025.7",
   "myst-parser>=4.0",
   "sphinx>=8.2,<9",
+  "sphinx-polyversion>=3,<4",
 ]
 
 [tool.hatch.build.targets.wheel]

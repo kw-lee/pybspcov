@@ -1,0 +1,18 @@
+{% if versions %}
+<div class="sidebar-tree">
+  <p class="caption" role="heading">
+    <span class="caption-text">Documentation version</span>
+  </p>
+  <select
+    aria-label="Documentation version"
+    onchange="if (this.value) window.location.href = this.value;"
+  >
+    {% for item in versions %}
+    <option
+      value="{{ docs_base_url }}{{ item.path }}/{{ pagename }}.html"
+      {% if current_version and item.kind == current_version.kind and item.name == current_version.name %}selected{% endif %}
+    >{{ item.kind }}: {{ item.name }}</option>
+    {% endfor %}
+  </select>
+</div>
+{% endif %}

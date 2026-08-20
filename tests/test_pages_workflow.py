@@ -30,7 +30,8 @@ def test_pages_workflow_builds_and_deploys_current_docs() -> None:
     triggers = workflow["on"]
     assert isinstance(triggers, dict)
     assert triggers["push"] == {
-        "branches": ["feat/bspcov-r-feature-parity"],
+        "branches": ["main", "feat/**"],
+        "tags": ["v*"],
     }
     assert "workflow_dispatch" in triggers
     assert workflow["permissions"] == {}
@@ -46,10 +47,17 @@ def test_pages_workflow_builds_and_deploys_current_docs() -> None:
     assert build["permissions"] == {"contents": "read", "pages": "read"}
     build_steps = build["steps"]
     assert isinstance(build_steps, list)
+    checkout_steps = [
+        step
+        for step in build_steps
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    ]
+    assert len(checkout_steps) == 1
+    assert checkout_steps[0]["with"] == {"fetch-depth": "0"}
     build_commands = [step["run"] for step in build_steps if "run" in step]
     assert build_commands == [
         "uv sync --locked --all-groups",
-        "uv run sphinx-build -W --keep-going -b html docs/source docs/_build/html",
+        "uv run sphinx-polyversion --sequential docs/poly.py docs/_build/html",
     ]
 
     upload_steps = [
