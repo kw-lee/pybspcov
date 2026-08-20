@@ -110,3 +110,25 @@ Python tests do not invoke R. The BandPPP test compares independent R and JAX
 posterior means using six combined batch Monte Carlo standard errors. The SBM
 tests compare support exactly and posterior summaries with the same statistical
 tolerance principle.
+
+## Cross-validation and SP500 preprocessing fixtures
+
+`band_cv_*` and `threshold_cv_*` record public `cv.bandPPP()` and
+`cv.thresPPP()` results from bspcov 1.0.3 with 1,000 posterior draws per fit.
+The Python tests use independent JAX random streams, require the same selected
+tuning parameter, and compare each score with a documented Monte Carlo and
+fold-assignment tolerance. Regenerate with:
+
+```text
+Rscript --vanilla reference/r/generate_cv_fixture.R tests/fixtures/r/bspcov-1.0.3 /path/to/bspcov-1.0.3-library
+```
+
+`sp500_fixed_*` validates `quantmod::periodReturn` monthly-return semantics,
+sector-then-symbol ordering, centering, and a fixed rank-one factor
+reconstruction independently in R double precision. It intentionally fixes the
+factor rank because Python documents a different automatic selector from the
+upstream optional `hdbinseg` `ah` criterion. Regenerate with:
+
+```text
+Rscript reference/r/generate_sp500_preprocessing_fixture.R
+```

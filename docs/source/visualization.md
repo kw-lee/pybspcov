@@ -14,7 +14,7 @@ from pybspcov import (
     save_quantile_plot,
 )
 
-plot_trace(model, row=0, column=1)
+trace_figure, trace_axes = plot_trace(model, row=0, column=1)
 figure, axis = plot_posterior_mean(model)
 figure, axes = plot_quantiles(model, probs=[0.025, 0.5, 0.975])
 save_quantile_plot(model, "quantiles.png")

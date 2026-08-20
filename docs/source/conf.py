@@ -52,7 +52,7 @@ nitpick_ignore_regex = [
         (
             r"(?:collections\.abc\.Sequence|jax\.Array|"
             r"numpy\.(?:ndarray|bool|number)|"
-            r"_DTypeName|_DeviceRequest|_CutoffMethod)"
+            r"_DTypeName|_DeviceRequest|_CutoffMethod|_ScreeningScope)"
         ),
     ),
 ]

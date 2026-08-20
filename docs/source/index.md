@@ -106,13 +106,13 @@ false-negative rate `0.05`, and `1000` cutoff simulations. Correlation screening
 is selected with `cutoff_method="correlation"` and defaults to a retained
 fraction of `0.2`.
 
-Screening is computed once per Python fit and the resulting `screening_mask_` is
-shared by all chains. This is an intentional reproducibility difference from
-`bspcov` 1.0.3, which consumes independent screening randomness per chain in its
-FNR path. `screening_cutoff_` is an array for FNR screening and `None` for
-correlation screening. Packed and reconstructed posterior draws have the same
-shapes as `BMSPCov`; `diagnostics_` additionally records the screening method,
-jitter, and active/screened edge counts.
+Screening is computed once per fit by default and the resulting
+`screening_mask_` is shared by all chains. Use `screening_scope="chain"` for
+`bspcov` 1.0.3 per-chain FNR screening. That mode publishes a `(chain, p, p)`
+mask, a `(chain,)` FNR cutoff, per-chain initial covariances, and per-chain
+screening diagnostic tuples. Correlation screening is deterministic but honors
+the same output shapes when chain scope is requested. Packed and reconstructed
+posterior draws retain the same chain-first shapes as `BMSPCov`.
 
 The R-derived tests establish screening and orchestration contracts and compare
 the public correlation-screened SBM posterior with a versioned `bspcov 1.0.3`

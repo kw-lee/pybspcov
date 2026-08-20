@@ -25,7 +25,11 @@ from R `bspcov` 1.0.3 through an idiomatic Python API.
 
 R and JAX use different random-number generators, so stochastic draws are not
 expected to match one-for-one. Versioned R fixtures compare deterministic
-transforms exactly and posterior summaries with Monte Carlo uncertainty.
+transforms exactly, posterior summaries with Monte Carlo uncertainty, and both
+public CV score tables with tolerance for independent posterior draws and fold
+assignments. `cross_validate_band_ppp` averages the leave-one-out
+log predictive densities, matching the executable R 1.0.3 source; the R help
+formula displays a sum even though `cv.bandPPP()` calls `mean()`.
 
 The SP500 preprocessing function implements the complete monthly-return,
 factor-reconstruction, and residual-output workflow without R runtime

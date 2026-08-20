@@ -66,8 +66,14 @@ def test_preprocess_sp500_returns_factor_residual_contract() -> None:
 
     processed = preprocess_sp500(records, sectors=["Tech", "Energy"], n_factors=1)
 
-    assert processed.Uhat.shape == (2, 2)
-    assert processed.factorparthat.shape == (2, 2)
+    assert processed.Uhat.shape == (3, 2)
+    assert processed.factorparthat.shape == (3, 2)
     assert processed.Khat == 1
-    assert processed.sectornames.tolist() == ["Tech", "Energy"]
+    assert processed.sectornames.tolist() == ["Energy", "Tech"]
+    np.testing.assert_allclose(
+        processed.returns,
+        np.asarray([[0.0, -2.0 / 30.0], [-0.1, 1.0 / 30.0], [0.1, 1.0 / 30.0]]),
+        rtol=0.0,
+        atol=1e-12,
+    )
     assert np.allclose(processed.Uhat + processed.factorparthat, processed.returns)

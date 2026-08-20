@@ -126,11 +126,16 @@ def preprocess_colon(
 ) -> DatasetBunch:
     """Log-transform and select genes by the absolute Welch statistic."""
     data = np.asarray(colon, dtype=np.float64)
-    target = np.asarray(tissues)
+    try:
+        target = np.asarray(tissues, dtype=np.float64)
+    except (TypeError, ValueError) as error:
+        raise TypeError("tissues must contain real signed labels") from error
     if data.ndim != 2 or target.ndim != 1 or data.shape[0] != target.shape[0]:
         raise ValueError("colon must be samples by genes and match tissues")
     if np.any(~np.isfinite(data)) or np.any(data <= 0):
         raise ValueError("colon must contain finite positive expression values")
+    if np.any(~np.isfinite(target)) or np.any(target == 0):
+        raise ValueError("tissues must contain only finite non-zero signed labels")
     if isinstance(n_features, bool) or not isinstance(n_features, int):
         raise TypeError("n_features must be an integer")
     if not 1 <= n_features <= data.shape[1]:
@@ -183,8 +188,18 @@ def preprocess_sp500(
     selected = records[np.isin(records["sector"], list(requested))]
     if selected.size == 0:
         raise ValueError("sectors did not select any rows")
-    symbols = np.unique(selected["symbol"])
-    returns_by_symbol: dict[str, tuple[npt.NDArray[np.datetime64], npt.NDArray[np.float64]]] = {}
+    symbols = np.asarray(
+        sorted(
+            np.unique(selected["symbol"]).astype(str),
+            key=lambda symbol: (
+                str(selected[selected["symbol"] == symbol][0]["sector"]),
+                symbol,
+            ),
+        )
+    )
+    returns_by_symbol: dict[
+        str, tuple[npt.NDArray[np.datetime64], npt.NDArray[np.float64]]
+    ] = {}
     sector_by_symbol: dict[str, str] = {}
     common_months: set[np.datetime64] | None = None
     for symbol_value in symbols:
@@ -196,13 +211,17 @@ def preprocess_sp500(
         last_indices = np.sort(rows.size - 1 - reverse_indices)
         monthly_dates = months[last_indices]
         prices = rows["adjusted"][last_indices].astype(np.float64)
-        monthly_returns = prices[1:] / prices[:-1] - 1.0
-        return_months = monthly_dates[1:]
+        monthly_returns = np.empty_like(prices)
+        monthly_returns[0] = prices[0] / float(rows["adjusted"][0]) - 1.0
+        monthly_returns[1:] = prices[1:] / prices[:-1] - 1.0
+        return_months = monthly_dates
         symbol = str(symbol_value)
         returns_by_symbol[symbol] = (return_months, monthly_returns)
         sector_by_symbol[symbol] = str(rows["sector"][0])
         month_set = set(return_months.tolist())
-        common_months = month_set if common_months is None else common_months & month_set
+        common_months = (
+            month_set if common_months is None else common_months & month_set
+        )
     if not common_months:
         raise ValueError("selected symbols have no common monthly returns")
     aligned_months = np.asarray(sorted(common_months), dtype="datetime64[M]")

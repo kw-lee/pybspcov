@@ -42,7 +42,7 @@ def test_posterior_mean_and_quantile_plots_return_figures() -> None:
 
 def test_trace_and_cv_plots_accept_public_result_objects() -> None:
     model = _model()
-    trace = plot_trace(model, row=0, column=1)
+    trace_figure, trace_axes = plot_trace(model, row=0, column=1)
     result = BandCVResult(
         scores=jnp.asarray([[1.0, 0.0, -2.0], [2.0, 0.0, -3.0]]),
         columns=("bandwidth", "epsilon", "log_predictive_density"),
@@ -52,7 +52,8 @@ def test_trace_and_cv_plots_accept_public_result_objects() -> None:
     figure, axis = plot_cv(result)
     method_figure, method_axis = result.plot()
 
-    assert trace is not None
+    assert trace_axes is not None
+    trace_figure.canvas.draw()
     assert axis.get_xlabel() == "bandwidth"
     figure.canvas.draw()
     method_figure.canvas.draw()

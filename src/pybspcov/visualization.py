@@ -37,20 +37,31 @@ def _matrix(value: Any) -> npt.NDArray[np.floating[Any]]:
     return matrix
 
 
-def plot_trace(estimator: Any, *, row: int, column: int, **kwargs: Any) -> Any:
+def plot_trace(
+    estimator: Any, *, row: int, column: int, **kwargs: Any
+) -> tuple[Any, Any]:
     """Plot one covariance entry across chains with ArviZ."""
     try:
         arviz = import_module("arviz")
     except ModuleNotFoundError as error:
         if error.name != "arviz":
             raise
-        raise ImportError("plot_trace requires ArviZ; install pybspcov[analysis]") from None
-    return arviz.plot_trace(
+        raise ImportError(
+            "plot_trace requires ArviZ; install pybspcov[analysis]"
+        ) from None
+    plots = arviz.plot_trace(
         estimator.to_arviz(),
         var_names=["covariance"],
         coords={"row": [row], "column": [column]},
         **kwargs,
     )
+    if hasattr(plots, "viz"):
+        figure = plots.viz["figure"].item()
+        axes = np.asarray(plots.viz["plot"].ds["covariance"].values)
+    else:
+        axes = np.asarray(plots)
+        figure = axes.flat[0].figure
+    return figure, axes
 
 
 def plot_posterior_mean(
@@ -71,7 +82,11 @@ def plot_posterior_mean(
     else:
         figure = ax.figure
     cmap = seaborn.blend_palette([color_low, color_high], as_cmap=True)
-    limits = {} if color_limits is None else {"vmin": color_limits[0], "vmax": color_limits[1]}
+    limits = (
+        {}
+        if color_limits is None
+        else {"vmin": color_limits[0], "vmax": color_limits[1]}
+    )
     seaborn.heatmap(matrix, ax=ax, cmap=cmap, annot=show_values, **limits)
     ax.set(title=title, xlabel="Variable", ylabel="Variable")
     return figure, ax
@@ -112,7 +127,11 @@ def plot_quantiles(
         figsize=(5 * len(matrices), 4),
     )
     axes = list(raw_axes.ravel())
-    limits = {} if color_limits is None else {"vmin": color_limits[0], "vmax": color_limits[1]}
+    limits = (
+        {}
+        if color_limits is None
+        else {"vmin": color_limits[0], "vmax": color_limits[1]}
+    )
     for matrix, label, axis in zip(matrices, labels, axes):
         seaborn.heatmap(matrix, ax=axis, **limits)
         axis.set(title=label, xlabel="Variable", ylabel="Variable")
@@ -148,7 +167,9 @@ def plot_cv(
     for value in np.unique(scores[:, 1]):
         subset = scores[scores[:, 1] == value]
         order = np.argsort(subset[:, 0])
-        ax.plot(subset[order, 0], subset[order, 2], marker="o", label=f"{second}={value:g}")
+        ax.plot(
+            subset[order, 0], subset[order, 2], marker="o", label=f"{second}={value:g}"
+        )
     ax.set(xlabel=first, ylabel=score, title="Cross-validation")
     ax.legend()
     return figure, ax

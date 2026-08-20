@@ -99,11 +99,12 @@ With `device=None`, JAX selects its default device; `device="cpu"` and
 requested backend is unavailable. Fitted arrays remain on the selected device.
 Its default `cutoff_method="fnr"` uses `fnr_correlation=0.25`,
 `false_negative_rate=0.05`, and `n_cutoff_simulations=1000`; the alternative
-`cutoff_method="correlation"` uses `retained_fraction=0.2`. Screening runs once
-per fit and all Python chains share `screening_mask_`. This intentionally differs
-from `bspcov` 1.0.3, whose FNR path draws a separate screening cutoff for each
-chain. `screening_cutoff_` is populated only for FNR screening, and
-`diagnostics_` reports active and screened edge counts.
+`cutoff_method="correlation"` uses `retained_fraction=0.2`. Screening runs
+once per fit by default, so all chains share `screening_mask_`.
+Set `screening_scope="chain"` for the per-chain FNR cutoffs and supports used
+by `bspcov` 1.0.3. In that mode, `screening_mask_` has shape `(chain, p, p)`,
+`screening_cutoff_` has shape `(chain,)`, and the screening diagnostics contain
+per-chain tuples. `screening_cutoff_` is populated only for FNR screening.
 
 The checked-in R fixtures validate screening formulas, estimator orchestration,
 and the public correlation-screened SBM posterior on the upstream `p=5`

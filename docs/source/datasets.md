@@ -22,4 +22,11 @@ directly. Install the `data` extra to request pandas frames with
 
 `load_colon` follows the Python samples-by-features convention and therefore
 transposes the upstream R `colon` object. The raw expression data remain
-untransformed until `preprocess_colon` is called.
+untransformed until `preprocess_colon` is called. Tissue labels must be finite non-zero signed values.
+
+`preprocess_sp500` follows the upstream sector-then-symbol column order and
+includes the first observed month using `quantmod::periodReturn` semantics. A
+committed R fixture validates monthly returns and the fixed-factor residual
+path. The optional automatic factor count uses the documented spectral-ratio
+selector rather than `hdbinseg`'s `ah` criterion; pass `n_factors` for a
+reproducible cross-language factor rank.
