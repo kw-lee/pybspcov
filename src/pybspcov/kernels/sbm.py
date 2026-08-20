@@ -11,6 +11,7 @@ from pybspcov.kernels.bm import (
     BMState,
     BMSweepResult,
     _bm_column_moments,
+    _sample_beta_from_precision,
     initialize_bm_state,
     pack_lower_triangle_column_major,
 )
@@ -543,15 +544,15 @@ def compact_sbm_sweep(
         beta_precision = jnp.where(lane_outer, unmasked_beta_precision, 0.0)
         beta_precision = beta_precision + jnp.diag((~lane_mask).astype(dtype))
         beta_precision = 0.5 * (beta_precision + beta_precision.T)
-        beta_mean = jnp.linalg.solve(beta_precision, conditional_scatter) / gamma
-        beta_cholesky = jnp.linalg.cholesky(beta_precision)
         dense_beta_noise = jax.random.normal(
             beta_key,
             (padded_count,),
             dtype=dtype,
         )
-        beta_noise = jnp.linalg.solve(
-            beta_cholesky.T,
+        beta_mean, beta_noise = _sample_beta_from_precision(
+            beta_precision,
+            conditional_scatter,
+            gamma,
             dense_beta_noise[active_positions],
         )
         compact_beta = jnp.where(lane_mask, beta_mean + beta_noise, 0.0)
