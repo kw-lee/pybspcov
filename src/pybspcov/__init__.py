@@ -21,6 +21,13 @@ from pybspcov.model_selection import (
     cross_validate_band_ppp,
     cross_validate_threshold_ppp,
 )
+from pybspcov.visualization import (
+    plot_cv,
+    plot_posterior_mean,
+    plot_quantiles,
+    plot_trace,
+    save_quantile_plot,
+)
 
 __all__ = [
     "BMDiagnostics",
@@ -38,6 +45,11 @@ __all__ = [
     "cross_validate_threshold_ppp",
     "load_colon",
     "load_sp500",
+    "plot_cv",
+    "plot_posterior_mean",
+    "plot_quantiles",
+    "plot_trace",
     "preprocess_colon",
     "preprocess_sp500",
+    "save_quantile_plot",
 ]

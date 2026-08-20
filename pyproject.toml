@@ -29,7 +29,7 @@ Repository = "https://github.com/kw-lee/pybspcov"
 
 [project.optional-dependencies]
 data = ["pandas>=2.3,<4"]
-analysis = ["arviz[matplotlib]>=1.2,<2"]
+analysis = ["arviz[matplotlib]>=1.2,<2", "seaborn>=0.13,<1"]
 cuda12 = ["jax[cuda12]>=0.11.0,<0.12"]
 
 [dependency-groups]
@@ -42,6 +42,7 @@ dev = [
   "pytest>=8.4",
   "pytest-cov>=6.2",
   "ruff>=0.12",
+  "seaborn>=0.13,<1",
   "twine>=6.1",
 ]
 docs = [

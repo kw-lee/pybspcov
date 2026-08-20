@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from itertools import product
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -25,6 +25,12 @@ class BandCVResult:
     best_bandwidth: int
     best_epsilon: float
 
+    def plot(self, *, ax: Any = None) -> tuple[Any, Any]:
+        """Plot the cross-validation scores."""
+        from pybspcov.visualization import plot_cv
+
+        return plot_cv(self, ax=ax)
+
 
 @dataclass(frozen=True)
 class ThresholdCVResult:
@@ -34,6 +40,12 @@ class ThresholdCVResult:
     columns: tuple[str, str, str]
     best_threshold: float
     best_epsilon: float
+
+    def plot(self, *, ax: Any = None) -> tuple[Any, Any]:
+        """Plot the cross-validation scores."""
+        from pybspcov.visualization import plot_cv
+
+        return plot_cv(self, ax=ax)
 
 
 def _real_vector(name: str, values: ArrayLike, *, positive: bool) -> list[float]:
@@ -188,7 +200,9 @@ def cross_validate_threshold_ppp(
             key_index += 1
             validation_covariance = validation.T @ validation / validation.shape[0]
             fold_errors.append(
-                cast(Array, jnp.linalg.norm(model.estimate() - validation_covariance, 2))
+                cast(
+                    Array, jnp.linalg.norm(model.estimate() - validation_covariance, 2)
+                )
             )
         rows.append((threshold, epsilon, float(jnp.mean(jnp.stack(fold_errors)))))
     scores = jnp.asarray(sorted(rows, key=lambda row: row[2]))
