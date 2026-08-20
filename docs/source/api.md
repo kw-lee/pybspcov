@@ -13,6 +13,8 @@
 ## Diagnostics
 
 ```{eval-rst}
+.. autoclass:: pybspcov.PosteriorSummary
+
 .. autoclass:: pybspcov.BMDiagnostics
 
 .. autoclass:: pybspcov.SBMDiagnostics

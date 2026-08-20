@@ -46,6 +46,8 @@ model = BMSPCov(
 )
 model.fit(X_centered, key=fit_key)
 posterior_mean = model.covariance_
+posterior_quantiles = model.quantile([0.025, 0.5, 0.975])
+posterior_summary = model.summary()
 ```
 
 `BMSPCov` does not center its input. For `p` variables,
@@ -56,6 +58,13 @@ posterior_mean = model.covariance_
 float64 and R reference results before scientific use.
 Enable the default float64 path before Python starts with
 `JAX_ENABLE_X64=1`.
+
+Both estimators provide `estimate()`, `quantile()`, and `summary()` after
+fitting. These methods pool retained draws across all chains, matching the R
+`bspcov` post-processing convention. Quantiles have shape `(n_probs, p, p)`;
+`PosteriorSummary` contains the pooled mean, sample standard deviation,
+requested quantiles, and fitted chain/sample counts. Returned statistics remain
+JAX arrays on the fitted device.
 
 `SBMSPCov` has the same input, dtype, device, key, and packed-sample contracts.
 With `device=None`, JAX selects its default device; `device="cpu"` and
