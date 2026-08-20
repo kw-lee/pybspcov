@@ -92,6 +92,16 @@ def test_arviz_summary_reports_covariance_diagnostics() -> None:
     )
 
 
+def test_to_arviz_uses_physical_chain_draw_order_under_custom_arviz_config() -> None:
+    model = _fitted_estimator(BMSPCov)
+
+    with az.rc_context({"data.sample_dims": ("draw", "chain")}):
+        covariance = model.to_arviz().posterior["covariance"]
+
+    assert covariance.dims == ("chain", "draw", "row", "column")
+    assert covariance.shape == (2, 2, 2, 2)
+
+
 def test_arviz_trace_plot_accepts_selected_covariance_entry() -> None:
     model = _diagnostic_estimator()
 

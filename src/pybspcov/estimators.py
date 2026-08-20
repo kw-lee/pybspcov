@@ -372,6 +372,7 @@ class _PosteriorSummariesMixin:
         features = range(self.n_features_in_)
         return arviz.from_dict(
             {"posterior": {"covariance": jax.device_get(covariance)}},
+            sample_dims=["chain", "draw"],
             dims={"covariance": ["row", "column"]},
             coords={"row": features, "column": features},
         )
