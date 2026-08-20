@@ -20,6 +20,15 @@ For `p` variables, fitted packed covariance draws have shape
 reconstructs symmetric draws with shape `(n_chains, n_samples, p, p)`, and
 `covariance_` is their posterior mean pooled across chains and retained samples.
 
+## Posterior summaries
+
+After fitting either estimator, `estimate()` returns the pooled posterior mean,
+`quantile(probs)` returns R Type-7 elementwise quantiles with shape
+`(n_probs, p, p)`, and `summary(probs)` returns a `PosteriorSummary`. Summary
+standard deviations use `ddof=1`, as in the upstream R summary, and all array
+results remain on the fitted JAX device. Probability inputs must be non-empty,
+real, finite, and between zero and one.
+
 ## SBMSPCov contract
 
 `SBMSPCov` follows the same centered-input, typed-key, sample-layout, dtype, and

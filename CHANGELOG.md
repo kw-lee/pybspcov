@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 - Establish the installable package, test, documentation, and CI scaffold.
 - Implement the public `BMSPCov` and `SBMSPCov` estimators.
+- Add pooled posterior `estimate`, `quantile`, and `summary` methods for both
+  estimators.
 - Add an executable BM/SBM quickstart and a wheel installation smoke check.
 - Document upstream provenance, protected-main development, isolated worktrees,
   AI-assisted contribution controls, and GPL-2.0-or-later licensing.
