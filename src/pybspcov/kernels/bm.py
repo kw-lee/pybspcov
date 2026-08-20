@@ -7,7 +7,9 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 from jax import Array
 
-from pybspcov.kernels.covariance import update_covariance_column
+from pybspcov.kernels.covariance import (
+    _update_covariance_column_from_conditional_precision,
+)
 from pybspcov.sampling.gig import _sample_gig_batch, sample_gig
 
 
@@ -299,13 +301,14 @@ def bm_sweep(
             jax.random.normal(beta_key, (active_count,), dtype=dtype),
         )
         beta = beta_mean + beta_noise
-        covariance, precision = update_covariance_column(
+        covariance, precision = _update_covariance_column_from_conditional_precision(
             current.covariance,
             current.precision,
             jnp.asarray(column),
             indices,
             beta,
             gamma,
+            moments.conditional_precision,
         )
         phi_keys = jax.random.split(phi_key, active_count)
         phi_chi = jnp.maximum(jnp.square(beta) / tau1sq, 1e-6)
