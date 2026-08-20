@@ -46,6 +46,8 @@ model = BMSPCov(
 )
 model.fit(X_centered, key=fit_key)
 posterior_mean = model.covariance_
+posterior_quantiles = model.quantile([0.025, 0.5, 0.975])
+posterior_summary = model.summary()
 ```
 
 `BMSPCov` does not center its input. For `p` variables,
@@ -56,6 +58,39 @@ posterior_mean = model.covariance_
 float64 and R reference results before scientific use.
 Enable the default float64 path before Python starts with
 `JAX_ENABLE_X64=1`.
+
+Both estimators provide `estimate()`, `quantile()`, and `summary()` after
+fitting. These methods pool retained draws across all chains, matching the R
+`bspcov` post-processing convention. Quantiles have shape `(n_probs, p, p)`;
+`PosteriorSummary` contains the pooled mean, sample standard deviation,
+requested quantiles, and fitted chain/sample counts. Returned statistics remain
+JAX arrays on the fitted device.
+
+Install the optional analysis dependencies to use ArviZ diagnostics and plots:
+
+```bash
+uv sync --extra analysis
+```
+
+```python
+import arviz as az
+
+inference_data = model.to_arviz()
+diagnostics = az.summary(inference_data, var_names=["covariance"])
+trace = az.plot_trace(
+    inference_data,
+    var_names=["covariance"],
+    coords={"row": [0], "column": [1]},
+    backend="matplotlib",
+)
+```
+
+`to_arviz()` preserves the fitted chain and retained-draw axes and exposes the
+full symmetric matrix as `posterior/covariance` with `row` and `column`
+coordinates. Conversion transfers the covariance draws from their JAX device
+to host memory. ArviZ supplies effective sample size, R-hat, Monte Carlo
+standard errors, intervals, and visualization; pybspcov does not duplicate
+those diagnostics in its lightweight `summary()`.
 
 `SBMSPCov` has the same input, dtype, device, key, and packed-sample contracts.
 With `device=None`, JAX selects its default device; `device="cpu"` and
