@@ -4,6 +4,7 @@ from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
+import jax.scipy as jsp
 from jax import Array
 
 from pybspcov.kernels.covariance import update_covariance_column
@@ -167,6 +168,34 @@ def _bm_beta_parameters(
     return beta_precision, beta_mean
 
 
+def _sample_beta_from_precision(
+    beta_precision: Array,
+    conditional_scatter: Array,
+    gamma: Array,
+    beta_standard_normal: Array,
+) -> tuple[Array, Array]:
+    """Draw beta using one SPD Cholesky factorization."""
+    beta_cholesky = jnp.linalg.cholesky(beta_precision)
+    beta_mean = (
+        jsp.linalg.solve_triangular(
+            beta_cholesky.T,
+            jsp.linalg.solve_triangular(
+                beta_cholesky,
+                conditional_scatter,
+                lower=True,
+            ),
+            lower=False,
+        )
+        / gamma
+    )
+    beta_noise = jsp.linalg.solve_triangular(
+        beta_cholesky.T,
+        beta_standard_normal,
+        lower=False,
+    )
+    return beta_mean, beta_noise
+
+
 def bm_column_parameters(
     *,
     covariance: Array,
@@ -257,17 +286,16 @@ def bm_sweep(
             gamma_draw.value,
             jnp.asarray(1.0, dtype=dtype),
         )
-        beta_precision, beta_mean = _bm_beta_parameters(
-            moments,
-            current.tau,
-            indices,
-            jnp.asarray(column),
-            diagonal_rate,
-            gamma,
+        beta_precision = (
+            moments.quadratic / gamma
+            + jnp.diag(1.0 / current.tau[indices, column])
+            + diagonal_rate * moments.conditional_precision
         )
-        beta_cholesky = jnp.linalg.cholesky(beta_precision)
-        beta_noise = jnp.linalg.solve(
-            beta_cholesky.T,
+        beta_precision = 0.5 * (beta_precision + beta_precision.T)
+        beta_mean, beta_noise = _sample_beta_from_precision(
+            beta_precision,
+            moments.conditional_scatter,
+            gamma,
             jax.random.normal(beta_key, (active_count,), dtype=dtype),
         )
         beta = beta_mean + beta_noise
