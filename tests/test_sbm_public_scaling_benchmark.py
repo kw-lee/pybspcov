@@ -594,3 +594,59 @@ def test_cli_emits_one_provenance_record_per_requested_dimension(
         assert record["fixture_sha256"] == f"{record['dimension']:064x}"
         assert record["git"] == {"revision": "abc123", "dirty": False}
         assert record["environment"] == {"python": "3.12", "jax": "0.11"}
+
+
+def test_cli_estimator_fixture_dtype_policy_is_forwarded_and_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    benchmark = _benchmark_module()
+    fixture_dtypes: list[str] = []
+
+    def fake_fixture(**kwargs: object) -> SimpleNamespace:
+        fixture_dtypes.append(str(kwargs["dtype"]))
+        return SimpleNamespace(
+            observations=np.zeros((6, 2), dtype=np.float32),
+            covariance=np.eye(2, dtype=np.float32),
+            sha256="0" * 64,
+        )
+
+    monkeypatch.setattr(benchmark, "generate_fixture", fake_fixture)
+    monkeypatch.setattr(
+        benchmark,
+        "run_repeated_fit_benchmark",
+        lambda *_args, **_kwargs: {
+            "compile_plus_execution_seconds": 1.0,
+            "execution_model": "parallel",
+            "chain_count": 1,
+            "measured_repetitions": [],
+            "timing_summary": {
+                "median": 0.5,
+                "q1": 0.5,
+                "q3": 0.5,
+                "min": 0.5,
+                "max": 0.5,
+            },
+        },
+    )
+    monkeypatch.setattr(benchmark, "_git_provenance", lambda _: {})
+    monkeypatch.setattr(benchmark, "_environment_metadata", dict)
+
+    benchmark.main(
+        [
+            "--dtype",
+            "float32",
+            "--fixture-dtype-policy",
+            "estimator",
+            "--dimensions",
+            "2",
+            "--chains",
+            "1",
+            "--repetitions",
+            "1",
+        ]
+    )
+
+    [record] = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert fixture_dtypes == ["float32"]
+    assert record["fixture_dtype_policy"] == "estimator"
