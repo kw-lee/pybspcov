@@ -327,6 +327,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="float32",
     )
     parser.add_argument(
+        "--fixture-dtype-policy",
+        choices=("float64", "estimator"),
+        default="float64",
+        help="fixture generation dtype; defaults to the current float64 policy",
+    )
+    parser.add_argument(
         "--dimensions",
         nargs="+",
         type=int,
@@ -401,12 +407,17 @@ def main(argv: Sequence[str] | None = None, *, stdout: TextIO | None = None) -> 
     try:
         for dimension in arguments.dimensions:
             n_observations = dimension * arguments.n_factor
+            fixture_dtype = (
+                arguments.dtype
+                if arguments.fixture_dtype_policy == "estimator"
+                else "float64"
+            )
             fixture = generate_fixture(
                 dimension=dimension,
                 density=arguments.density,
                 n_observations=n_observations,
                 seed=arguments.seed,
-                dtype="float64",
+                dtype=fixture_dtype,
             )
             value_dtype = np.dtype(arguments.dtype)
             summary = run_repeated_fit_benchmark(
@@ -439,6 +450,7 @@ def main(argv: Sequence[str] | None = None, *, stdout: TextIO | None = None) -> 
                 ),
                 "device": arguments.device,
                 "dtype": arguments.dtype,
+                "fixture_dtype_policy": arguments.fixture_dtype_policy,
                 "fixture_sha256": fixture.sha256,
                 "git": git,
                 "environment": environment,
