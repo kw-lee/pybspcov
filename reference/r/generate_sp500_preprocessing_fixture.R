@@ -34,4 +34,7 @@ write.csv(returns, file.path(output_directory, "sp500_fixed_returns.csv"), row.n
 write.csv(factor_part, file.path(output_directory, "sp500_fixed_factor.csv"), row.names = FALSE)
 write.csv(residuals, file.path(output_directory, "sp500_fixed_residuals.csv"), row.names = FALSE)
 write.csv(symbols, file.path(output_directory, "sp500_fixed_columns.csv"), row.names = FALSE)
-writeLines(capture.output(sessionInfo()), file.path(output_directory, "sp500_session_info.txt"))
+writeLines(
+  sub("[[:space:]]+$", "", capture.output(sessionInfo())),
+  file.path(output_directory, "sp500_session_info.txt")
+)

@@ -41,4 +41,7 @@ write.csv(
   file.path(output_directory, "threshold_cv_scores.csv"),
   row.names = FALSE
 )
-writeLines(capture.output(sessionInfo()), file.path(output_directory, "cv_session_info.txt"))
+writeLines(
+  sub("[[:space:]]+$", "", capture.output(sessionInfo())),
+  file.path(output_directory, "cv_session_info.txt")
+)
