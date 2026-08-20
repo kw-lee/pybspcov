@@ -20,7 +20,7 @@ import jaxlib
 import numpy as np
 import numpy.typing as npt
 
-from pybspcov import SBMSPCov
+from pybspcov import BMSPCov, SBMSPCov
 
 FloatArray = npt.NDArray[np.floating[Any]]
 MemoryProbe = Callable[[str], int]
@@ -108,13 +108,15 @@ def generate_fixture(
 
 
 def _block_public_outputs(estimator: Any) -> None:
-    outputs = (
+    outputs = [
         estimator.covariance_,
         estimator.posterior_samples_packed_,
         estimator.phi_samples_packed_,
-        estimator.screening_mask_,
-        estimator.diagnostics_.accepted,
-    )
+    ]
+    screening_mask = getattr(estimator, "screening_mask_", None)
+    if screening_mask is not None:
+        outputs.append(screening_mask)
+    outputs.append(estimator.diagnostics_.accepted)
     for output in outputs:
         for leaf in jax.tree.leaves(output):
             blocker = getattr(leaf, "block_until_ready", None)
@@ -190,8 +192,17 @@ def run_public_fit_benchmark(
         )
 
     accepted = np.asarray(final.diagnostics_.accepted, dtype=np.bool_)
-    screening_mask = np.asarray(final.screening_mask_, dtype=np.bool_)
-    compact_width = int(np.max(np.count_nonzero(screening_mask, axis=0), initial=0))
+    screening_mask = getattr(final, "screening_mask_", None)
+    compact_width = (
+        int(
+            np.max(
+                np.count_nonzero(np.asarray(screening_mask, dtype=np.bool_), axis=0),
+                initial=0,
+            )
+        )
+        if screening_mask is not None
+        else None
+    )
     dtype_name = str(np.dtype(final.dtype_))
     relative_error = float(np.linalg.norm(covariance - truth) / truth_norm)
     if first_fit_seconds is None:
@@ -205,7 +216,11 @@ def run_public_fit_benchmark(
         "dtype": dtype_name,
         "accepted_sweeps": int(np.count_nonzero(accepted)),
         "rejected_sweeps": int(final.diagnostics_.n_rejected_sweeps),
-        "active_edges": int(final.diagnostics_.n_active_edges),
+        "active_edges": (
+            int(final.diagnostics_.n_active_edges)
+            if hasattr(final.diagnostics_, "n_active_edges")
+            else None
+        ),
         "compact_width": compact_width,
         "truth_relative_frobenius_error": relative_error,
         "device_memory_bytes": (
@@ -261,6 +276,7 @@ def _environment_metadata() -> dict[str, object]:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--estimator", choices=("bm", "sbm"), default="sbm")
     parser.add_argument("--device", choices=("cpu", "gpu", "cuda"), default="cpu")
     parser.add_argument(
         "--dtype",
@@ -279,6 +295,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--samples", type=int, default=2)
     parser.add_argument("--repetitions", type=int, default=5)
     parser.add_argument("--seed", type=int, default=20260803)
+    parser.add_argument("--output", type=Path)
     arguments = parser.parse_args(argv)
     if any(dimension < 2 for dimension in arguments.dimensions):
         parser.error("all dimensions must be at least two")
@@ -298,54 +315,73 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None, *, stdout: TextIO | None = None) -> None:
     """Run requested dimensions and emit one JSON record per public fit cell."""
     arguments = parse_args(argv)
-    output = sys.stdout if stdout is None else stdout
     project_root = Path(__file__).resolve().parents[1]
     git = _git_provenance(project_root)
     environment = _environment_metadata()
-    for dimension in arguments.dimensions:
-        n_observations = dimension * arguments.n_factor
-        fixture = generate_fixture(
-            dimension=dimension,
-            density=arguments.density,
-            n_observations=n_observations,
-            seed=arguments.seed,
-            dtype=arguments.dtype,
+    estimator_factory = BMSPCov if arguments.estimator == "bm" else SBMSPCov
+    estimator_kwargs: dict[str, object] = {
+        "burnin": arguments.burnin,
+        "n_samples": arguments.samples,
+        "n_chains": 1,
+        "dtype": arguments.dtype,
+        "device": arguments.device,
+    }
+    if arguments.estimator == "sbm":
+        estimator_kwargs.update(
+            cutoff_method="correlation",
+            retained_fraction=arguments.density,
         )
-        summary = run_public_fit_benchmark(
-            fixture.observations,
-            fixture.covariance,
-            estimator_factory=SBMSPCov,
-            estimator_kwargs={
+
+    output_path = arguments.output
+    if output_path is not None and stdout is None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_handle: TextIO = output_path.open("w", encoding="utf-8")
+        close_output = True
+    else:
+        output_handle = sys.stdout if stdout is None else stdout
+        close_output = False
+
+    try:
+        for dimension in arguments.dimensions:
+            n_observations = dimension * arguments.n_factor
+            fixture = generate_fixture(
+                dimension=dimension,
+                density=arguments.density,
+                n_observations=n_observations,
+                seed=arguments.seed,
+                dtype=arguments.dtype,
+            )
+            summary = run_public_fit_benchmark(
+                fixture.observations,
+                fixture.covariance,
+                estimator_factory=estimator_factory,
+                estimator_kwargs=estimator_kwargs,
+                repetitions=arguments.repetitions,
+                seed=arguments.seed,
+                memory_probe=None,
+            )
+            record = {
+                "benchmark": f"{arguments.estimator}-public-scaling",
+                "schema_version": "1.0",
+                "estimator": arguments.estimator,
+                "dimension": dimension,
+                "density": arguments.density,
+                "n_observations": n_observations,
                 "burnin": arguments.burnin,
-                "n_samples": arguments.samples,
-                "n_chains": 1,
-                "cutoff_method": "correlation",
-                "retained_fraction": arguments.density,
-                "dtype": arguments.dtype,
+                "samples": arguments.samples,
+                "repetitions": arguments.repetitions,
+                "seed": arguments.seed,
                 "device": arguments.device,
-            },
-            repetitions=arguments.repetitions,
-            seed=arguments.seed,
-            memory_probe=None,
-        )
-        record = {
-            "benchmark": "sbm-public-scaling",
-            "schema_version": "1.0",
-            "dimension": dimension,
-            "density": arguments.density,
-            "n_observations": n_observations,
-            "burnin": arguments.burnin,
-            "samples": arguments.samples,
-            "repetitions": arguments.repetitions,
-            "seed": arguments.seed,
-            "device": arguments.device,
-            "dtype": arguments.dtype,
-            "fixture_sha256": fixture.sha256,
-            "git": git,
-            "environment": environment,
-            **summary,
-        }
-        print(json.dumps(record, sort_keys=True), file=output)
+                "dtype": arguments.dtype,
+                "fixture_sha256": fixture.sha256,
+                "git": git,
+                "environment": environment,
+                **summary,
+            }
+            print(json.dumps(record, sort_keys=True), file=output_handle)
+    finally:
+        if close_output:
+            output_handle.close()
 
 
 if __name__ == "__main__":

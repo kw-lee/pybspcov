@@ -293,6 +293,136 @@ def test_public_runner_uses_only_the_estimator_fit_seam() -> None:
         )
 
 
+def test_public_runner_allows_bm_outputs_without_screening_metrics() -> None:
+    benchmark = _benchmark_module()
+
+    class BMEstimator:
+        def fit(
+            self,
+            observations: np.ndarray,
+            *,
+            key: jax.Array,
+        ) -> BMEstimator:
+            del observations, key
+            self.covariance_ = jax.numpy.eye(2, dtype=jax.numpy.float32)
+            self.posterior_samples_packed_ = jax.numpy.ones(
+                (1, 1, 3), dtype=jax.numpy.float32
+            )
+            self.phi_samples_packed_ = jax.numpy.ones(
+                (1, 1, 3), dtype=jax.numpy.float32
+            )
+            self.diagnostics_ = SimpleNamespace(
+                accepted=jax.numpy.ones((1, 1), dtype=jax.numpy.bool_),
+                n_rejected_sweeps=0,
+            )
+            self.dtype_ = np.dtype("float32")
+            return self
+
+    clock_values = iter([0.0, 1.0, 2.0, 3.0])
+    summary = benchmark.run_public_fit_benchmark(
+        np.zeros((4, 2), dtype=np.float32),
+        np.eye(2, dtype=np.float32),
+        estimator_factory=lambda **_: BMEstimator(),
+        estimator_kwargs={},
+        repetitions=1,
+        seed=7,
+        clock=lambda: next(clock_values),
+        memory_probe=None,
+    )
+
+    assert summary["active_edges"] is None
+    assert summary["compact_width"] is None
+    assert summary["posterior_mean_finite"] is True
+    assert summary["posterior_mean_symmetric"] is True
+    assert summary["posterior_mean_spd"] is True
+
+
+def test_cli_selects_bm_and_writes_jsonl_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    benchmark = _benchmark_module()
+    selected_factories: list[object] = []
+    selected_kwargs: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        benchmark,
+        "generate_fixture",
+        lambda **_: SimpleNamespace(
+            observations=np.zeros((6, 2), dtype=np.float32),
+            covariance=np.eye(2, dtype=np.float32),
+            sha256="0" * 64,
+        ),
+    )
+
+    def fake_runner(
+        observations: np.ndarray,
+        truth_covariance: np.ndarray,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        del observations, truth_covariance
+        selected_factories.append(kwargs["estimator_factory"])
+        estimator_kwargs = kwargs["estimator_kwargs"]
+        assert isinstance(estimator_kwargs, dict)
+        selected_kwargs.append(estimator_kwargs)
+        return {
+            "first_fit_seconds": 1.0,
+            "warmed_fit_seconds": {
+                "raw": [0.5],
+                "median": 0.5,
+                "min": 0.5,
+                "max": 0.5,
+            },
+            "posterior_mean_finite": True,
+            "posterior_mean_symmetric": True,
+            "posterior_mean_spd": True,
+            "dtype": "float32",
+            "accepted_sweeps": 1,
+            "rejected_sweeps": 0,
+            "active_edges": None,
+            "compact_width": None,
+            "truth_relative_frobenius_error": 0.1,
+            "device_memory_bytes": None,
+        }
+
+    monkeypatch.setattr(benchmark, "run_public_fit_benchmark", fake_runner)
+    monkeypatch.setattr(
+        benchmark,
+        "_git_provenance",
+        lambda _: {"revision": "abc123", "dirty": False},
+    )
+    monkeypatch.setattr(benchmark, "_environment_metadata", dict)
+    output_path = tmp_path / "bm.jsonl"
+
+    benchmark.main(
+        [
+            "--estimator",
+            "bm",
+            "--dimensions",
+            "2",
+            "--repetitions",
+            "1",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    records = [json.loads(line) for line in output_path.read_text().splitlines()]
+    assert len(records) == 1
+    assert records[0]["benchmark"] == "bm-public-scaling"
+    assert records[0]["estimator"] == "bm"
+    assert selected_factories == [benchmark.BMSPCov]
+    assert selected_kwargs == [
+        {
+            "burnin": 1,
+            "n_samples": 2,
+            "n_chains": 1,
+            "dtype": "float32",
+            "device": "cpu",
+        }
+    ]
+
+
 def test_cli_emits_one_provenance_record_per_requested_dimension(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
