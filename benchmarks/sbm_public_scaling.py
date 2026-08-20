@@ -434,8 +434,8 @@ def main(argv: Sequence[str] | None = None, *, stdout: TextIO | None = None) -> 
                 "prng_policy": (
                     "jax.random.key(seed) is split into one warm-up key and one key "
                     "per measured repetition; sequential fits split each repetition "
-                    "key by chain, while vmap fits pass one repetition key to the "
-                    "estimator."
+                    "key by chain, while parallel and vmap fits pass one repetition "
+                    "key to the estimator, which derives per-chain keys."
                 ),
                 "device": arguments.device,
                 "dtype": arguments.dtype,

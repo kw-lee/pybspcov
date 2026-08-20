@@ -588,7 +588,8 @@ def test_cli_emits_one_provenance_record_per_requested_dimension(
         assert record["prng_policy"] == (
             "jax.random.key(seed) is split into one warm-up key and one key per "
             "measured repetition; sequential fits split each repetition key by "
-            "chain, while vmap fits pass one repetition key to the estimator."
+            "chain, while parallel and vmap fits pass one repetition key to the "
+            "estimator, which derives per-chain keys."
         )
         assert record["fixture_sha256"] == f"{record['dimension']:064x}"
         assert record["git"] == {"revision": "abc123", "dirty": False}
