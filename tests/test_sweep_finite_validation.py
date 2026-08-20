@@ -20,19 +20,24 @@ def _isfinite_calls(tree: ast.AST) -> list[ast.Call]:
     ]
 
 
-def _has_updated_finite_check(statement: ast.stmt) -> bool:
-    return (
-        isinstance(statement, ast.Assign)
+def _whole_state_finite_predicates(tree: ast.AST) -> list[ast.Call]:
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "reduce"
+        and isinstance(node.func.value, ast.Attribute)
+        and node.func.value.attr == "logical_and"
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Call)
+        and isinstance(node.args[0].func, ast.Attribute)
+        and node.args[0].func.attr == "stack"
         and any(
-            isinstance(target, ast.Name) and target.id == "finite"
-            for target in statement.targets
+            isinstance(argument, ast.ListComp) and bool(_isfinite_calls(argument))
+            for argument in node.args[0].args
         )
-        and bool(_isfinite_calls(statement))
-        and any(
-            isinstance(node, ast.Name) and node.id == "updated"
-            for node in ast.walk(statement.value)
-        )
-    )
+    ]
 
 
 @pytest.mark.parametrize("sweep", [bm_sweep, sbm_sweep, compact_sbm_sweep])
@@ -57,7 +62,8 @@ def test_sweep_validates_whole_state_after_column_loop(
     )
 
     assert not _isfinite_calls(update_column)
-    assert any(
-        _has_updated_finite_check(statement)
-        for statement in function.body[function.body.index(column_loop) + 1 :]
+    post_loop = ast.Module(
+        body=function.body[function.body.index(column_loop) + 1 :],
+        type_ignores=[],
     )
+    assert len(_whole_state_finite_predicates(post_loop)) == 1
