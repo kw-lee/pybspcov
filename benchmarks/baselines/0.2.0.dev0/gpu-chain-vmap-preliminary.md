@@ -33,7 +33,7 @@ does not contain float64 measurements or invented repetitions.
 - Observations (`n`): 600.
 - Burn-in sweeps: 50.
 - Retained samples: 50.
-- Density: N/A for BM.
+- Fixture target density: not supplied (BM has no screening-density parameter).
 - Dtype: float32.
 - Device: NVIDIA GeForce RTX 3090.
 - JAX/JAXLIB: 0.11.1.
