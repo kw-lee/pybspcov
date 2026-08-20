@@ -141,7 +141,7 @@ def _measured_repetition(
     raw_wall_seconds: Sequence[float],
     truth: npt.NDArray[Any],
     *,
-    execution_model: Literal["parallel", "sequential"],
+    execution_model: Literal["parallel", "sequential", "vmap"],
     chain_count: int,
     n_samples: int,
     repetition_index: int,
@@ -191,7 +191,7 @@ def run_repeated_fit_benchmark(
     *,
     estimator_factory: Callable[..., Any] = SBMSPCov,
     estimator_kwargs: Mapping[str, object],
-    execution_model: Literal["parallel", "sequential"],
+    execution_model: Literal["parallel", "sequential", "vmap"],
     chain_count: int,
     repetitions: int,
     seed: int,
@@ -200,8 +200,8 @@ def run_repeated_fit_benchmark(
     """Compile once, then record independently keyed four-chain repetitions."""
     if chain_count < 1 or repetitions < 1:
         raise ValueError("chain_count and repetitions must be positive")
-    if execution_model not in {"parallel", "sequential"}:
-        raise ValueError("execution_model must be 'parallel' or 'sequential'")
+    if execution_model not in {"parallel", "sequential", "vmap"}:
+        raise ValueError("execution_model must be parallel, sequential, or vmap")
     if "n_samples" not in estimator_kwargs:
         raise ValueError("estimator_kwargs must include n_samples")
 
@@ -216,7 +216,8 @@ def run_repeated_fit_benchmark(
     if not np.isfinite(truth_norm) or truth_norm <= 0.0:
         raise ValueError("truth_covariance must have a finite positive norm")
 
-    estimator_chain_count = chain_count if execution_model == "parallel" else 1
+    uses_vmapped_fit = execution_model in {"parallel", "vmap"}
+    estimator_chain_count = chain_count if uses_vmapped_fit else 1
     configuration = dict(estimator_kwargs)
     configuration["n_chains"] = estimator_chain_count
     repetition_keys = jax.random.split(jax.random.key(seed), repetitions + 1)
@@ -233,7 +234,7 @@ def run_repeated_fit_benchmark(
     for repetition_index, repetition_key in enumerate(repetition_keys[1:]):
         fit_keys = (
             [repetition_key]
-            if execution_model == "parallel"
+            if uses_vmapped_fit
             else list(jax.random.split(repetition_key, chain_count))
         )
         estimators: list[Any] = []
@@ -337,6 +338,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--samples", type=int, default=50)
     parser.add_argument("--chains", type=int, default=4)
     parser.add_argument("--repetitions", type=int, default=10)
+    parser.add_argument(
+        "--execution-mode",
+        choices=("sequential", "vmap"),
+        help="GPU execution mode; defaults to sequential for historical compatibility",
+    )
     parser.add_argument("--seed", type=int, default=20260803)
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args(argv)
@@ -350,6 +356,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--burnin must be non-negative")
     if arguments.samples < 1 or arguments.chains < 1 or arguments.repetitions < 1:
         parser.error("--samples, --chains, and --repetitions must be positive")
+    if arguments.device == "cpu" and arguments.execution_mode is not None:
+        parser.error("--execution-mode is available only for GPU or CUDA")
     if arguments.dtype == "float64" and not jax.config.x64_enabled:
         parser.error("float64 requires JAX_ENABLE_X64=1")
     return arguments
@@ -362,6 +370,13 @@ def main(argv: Sequence[str] | None = None, *, stdout: TextIO | None = None) -> 
     git = _git_provenance(project_root)
     environment = _environment_metadata()
     estimator_factory = BMSPCov if arguments.estimator == "bm" else SBMSPCov
+    execution_model: Literal["parallel", "sequential", "vmap"] = (
+        "parallel"
+        if arguments.device == "cpu"
+        else "sequential"
+        if arguments.execution_mode is None
+        else arguments.execution_mode
+    )
     estimator_kwargs: dict[str, object] = {
         "burnin": arguments.burnin,
         "n_samples": arguments.samples,
@@ -399,9 +414,7 @@ def main(argv: Sequence[str] | None = None, *, stdout: TextIO | None = None) -> 
                 np.asarray(fixture.covariance, dtype=value_dtype),
                 estimator_factory=estimator_factory,
                 estimator_kwargs=estimator_kwargs,
-                execution_model=(
-                    "parallel" if arguments.device == "cpu" else "sequential"
-                ),
+                execution_model=execution_model,
                 chain_count=arguments.chains,
                 repetitions=arguments.repetitions,
                 seed=arguments.seed,

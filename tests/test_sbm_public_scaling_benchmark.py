@@ -272,6 +272,99 @@ def test_repeated_runner_uses_four_sequential_single_chain_gpu_fits() -> None:
     )
 
 
+def test_repeated_runner_uses_one_vmapped_gpu_fit_with_requested_chain_count() -> None:
+    """Catch GPU vmap mode falling back to sequential single-chain fits."""
+    benchmark = _benchmark_module()
+    configurations: list[dict[str, object]] = []
+    estimators: list[FakeEstimator] = []
+
+    def estimator_factory(**configuration: object) -> FakeEstimator:
+        configurations.append(dict(configuration))
+        estimator = FakeEstimator(index=len(estimators), fit_keys=[], blocked=[])
+        estimators.append(estimator)
+        return estimator
+
+    clock_values = iter([0.0, 1.0, 2.0, 10.0])
+    result = benchmark.run_repeated_fit_benchmark(
+        np.zeros((6, 2), dtype=np.float32),
+        np.diag([2.0, 3.0]).astype(np.float32),
+        estimator_factory=estimator_factory,
+        estimator_kwargs={
+            "burnin": 2,
+            "n_samples": 2,
+            "dtype": "float32",
+            "device": "gpu",
+        },
+        execution_model="vmap",
+        chain_count=4,
+        repetitions=1,
+        seed=41,
+        clock=lambda: next(clock_values),
+    )
+
+    assert [configuration["n_chains"] for configuration in configurations] == [4, 4]
+    assert len(estimators) == 2
+    assert result["measured_repetitions"][0]["raw_wall_seconds"] == [8.0]
+    assert result["measured_repetitions"][0]["total_wall_seconds"] == 8.0
+    assert result["measured_repetitions"][0]["normalized_wall_seconds_per_chain"] == 2.0
+
+
+@pytest.mark.parametrize(
+    ("execution_option", "expected_execution_model"),
+    [(None, "sequential"), ("vmap", "vmap")],
+)
+def test_gpu_cli_forwards_selectable_execution_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    execution_option: str | None,
+    expected_execution_model: str,
+) -> None:
+    """Catch GPU CLI mode selection being ignored or falling back to sequential."""
+    benchmark = _benchmark_module()
+    forwarded_execution_models: list[str] = []
+
+    monkeypatch.setattr(
+        benchmark,
+        "generate_fixture",
+        lambda **_: SimpleNamespace(
+            observations=np.zeros((6, 2), dtype=np.float64),
+            covariance=np.eye(2, dtype=np.float64),
+            sha256="0" * 64,
+        ),
+    )
+
+    def fake_runner(
+        observations: np.ndarray,
+        truth_covariance: np.ndarray,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        del observations, truth_covariance
+        forwarded_execution_models.append(str(kwargs["execution_model"]))
+        return {
+            "compile_plus_execution_seconds": 1.0,
+            "execution_model": expected_execution_model,
+            "chain_count": 4,
+            "measured_repetitions": [],
+            "timing_summary": {
+                "median": 0.5,
+                "q1": 0.5,
+                "q3": 0.5,
+                "min": 0.5,
+                "max": 0.5,
+            },
+        }
+
+    monkeypatch.setattr(benchmark, "run_repeated_fit_benchmark", fake_runner)
+    monkeypatch.setattr(benchmark, "_git_provenance", lambda _: {})
+    monkeypatch.setattr(benchmark, "_environment_metadata", dict)
+    arguments = ["--device", "gpu", "--dimensions", "2", "--repetitions", "1"]
+    if execution_option is not None:
+        arguments.extend(["--execution-mode", execution_option])
+
+    benchmark.main(arguments)
+
+    assert forwarded_execution_models == [expected_execution_model]
+
+
 def test_cli_selects_bm_and_writes_jsonl_output(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
