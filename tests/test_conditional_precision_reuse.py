@@ -45,29 +45,42 @@ def test_precomputed_conditional_precision_update_matches_public_update() -> Non
         assert jnp.array_equal(actual, expected)
 
 
-def _nested_update_call_targets(sweep: Callable[..., object]) -> set[str]:
+def _nested_update_column(sweep: Callable[..., object]) -> ast.FunctionDef:
     tree = ast.parse(textwrap.dedent(inspect.getsource(sweep)))
-    update_column = next(
+    return next(
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.FunctionDef) and node.name == "update_column"
     )
-    return {
-        call.func.id
-        for call in ast.walk(update_column)
-        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
-    }
 
 
 @pytest.mark.parametrize(
-    "sweep",
-    [bm.bm_sweep, sbm.sbm_sweep, sbm.compact_sbm_sweep],
+    ("sweep", "expected_conditional_precision"),
+    [
+        (bm.bm_sweep, "moments.conditional_precision"),
+        (sbm.sbm_sweep, "moments.conditional_precision"),
+        (sbm.compact_sbm_sweep, "conditional_precision"),
+    ],
     ids=["bm", "masked_dense_sbm", "compact_sbm"],
 )
-def test_production_sweeps_call_the_precomputed_covariance_update(
+def test_production_sweeps_reuse_their_computed_conditional_precision(
     sweep: Callable[..., object],
+    expected_conditional_precision: str,
 ) -> None:
-    call_targets = _nested_update_call_targets(sweep)
+    update_column = _nested_update_column(sweep)
+    calls = [
+        call
+        for call in ast.walk(update_column)
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+    ]
+    call_targets = {call.func.id for call in calls}
+    helper_call = next(
+        call
+        for call in calls
+        if call.func.id == "_update_covariance_column_from_conditional_precision"
+    )
 
     assert "_update_covariance_column_from_conditional_precision" in call_targets
     assert "update_covariance_column" not in call_targets
+    assert len(helper_call.args) == 7
+    assert ast.unparse(helper_call.args[6]) == expected_conditional_precision
