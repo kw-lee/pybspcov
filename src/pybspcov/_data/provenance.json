@@ -1,0 +1,12 @@
+{
+  "upstream": {
+    "package": "bspcov",
+    "version": "1.0.3",
+    "commit": "165106c5ab8f6506e6d69b0b8f94ce5bdc99092f"
+  },
+  "source_sha256": {
+    "SP500.rda": "49824f4998388d20241397c46f0a234ce4175972ced97a7fb843c0337b03ed51",
+    "colon.rda": "452555af072eb2fd7adff64b85cd1f3dd73ef6a7dabbf83498dedd7915fa7570",
+    "tissues.rda": "78a2ded7e1c0110f50ef8ca47a7405af43ad4b5f92fcc50cd88a366de2d720fe"
+  }
+}

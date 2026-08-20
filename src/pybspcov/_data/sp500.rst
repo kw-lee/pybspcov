@@ -1,0 +1,5 @@
+S&P 500 adjusted-price example data
+===================================
+
+The resource contains the ``SP500`` data frame distributed with R ``bspcov``
+1.0.3: symbol, date, adjusted closing price, and sector for 1,345,751 rows.

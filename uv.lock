@@ -1653,6 +1653,7 @@ version = "0.1.0.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "jax" },
+    { name = "numpy" },
 ]
 
 [package.optional-dependencies]
@@ -1661,6 +1662,9 @@ analysis = [
 ]
 cuda12 = [
     { name = "jax", extra = ["cuda12"] },
+]
+data = [
+    { name = "pandas" },
 ]
 
 [package.dev-dependencies]
@@ -1689,8 +1693,10 @@ requires-dist = [
     { name = "arviz", extras = ["matplotlib"], marker = "extra == 'analysis'", specifier = ">=1.2,<2" },
     { name = "jax", specifier = ">=0.11.0,<0.12" },
     { name = "jax", extras = ["cuda12"], marker = "extra == 'cuda12'", specifier = ">=0.11.0,<0.12" },
+    { name = "numpy", specifier = ">=2.0" },
+    { name = "pandas", marker = "extra == 'data'", specifier = ">=2.3,<4" },
 ]
-provides-extras = ["analysis", "cuda12"]
+provides-extras = ["data", "analysis", "cuda12"]
 
 [package.metadata.requires-dev]
 benchmark = [{ name = "matplotlib", specifier = ">=3.10,<4" }]

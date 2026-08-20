@@ -1,4 +1,11 @@
 from pybspcov._version import __version__
+from pybspcov.datasets import (
+    DatasetBunch,
+    load_colon,
+    load_sp500,
+    preprocess_colon,
+    preprocess_sp500,
+)
 from pybspcov.estimators import (
     BandPPP,
     BMDiagnostics,
@@ -20,6 +27,7 @@ __all__ = [
     "BMSPCov",
     "BandCVResult",
     "BandPPP",
+    "DatasetBunch",
     "PosteriorSummary",
     "SBMDiagnostics",
     "SBMSPCov",
@@ -28,4 +36,8 @@ __all__ = [
     "__version__",
     "cross_validate_band_ppp",
     "cross_validate_threshold_ppp",
+    "load_colon",
+    "load_sp500",
+    "preprocess_colon",
+    "preprocess_sp500",
 ]
