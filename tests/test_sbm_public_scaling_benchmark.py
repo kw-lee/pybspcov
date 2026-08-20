@@ -227,7 +227,7 @@ def test_repeated_runner_uses_one_vmapped_four_chain_fit_per_cpu_run() -> None:
 
 
 def test_repeated_runner_uses_four_sequential_single_chain_gpu_fits() -> None:
-    """Catch accidentally vmapping or summing the four GPU chain timings."""
+    """Catch failing to sum the intentionally sequential GPU chain timings."""
     benchmark = _benchmark_module()
     configurations: list[dict[str, object]] = []
     estimators: list[FakeEstimator] = []

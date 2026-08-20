@@ -197,7 +197,7 @@ def run_repeated_fit_benchmark(
     seed: int,
     clock: Callable[[], float] = time.perf_counter,
 ) -> dict[str, object]:
-    """Compile once, then record independently keyed four-chain repetitions."""
+    """Compile once, then record repetitions at the requested chain count."""
     if chain_count < 1 or repetitions < 1:
         raise ValueError("chain_count and repetitions must be positive")
     if execution_model not in {"parallel", "sequential", "vmap"}:
