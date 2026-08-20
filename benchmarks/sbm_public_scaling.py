@@ -431,6 +431,12 @@ def main(argv: Sequence[str] | None = None, *, stdout: TextIO | None = None) -> 
                 "chain_count": arguments.chains,
                 "repetitions": arguments.repetitions,
                 "seed": arguments.seed,
+                "prng_policy": (
+                    "jax.random.key(seed) is split into one warm-up key and one key "
+                    "per measured repetition; sequential fits split each repetition "
+                    "key by chain, while vmap fits pass one repetition key to the "
+                    "estimator."
+                ),
                 "device": arguments.device,
                 "dtype": arguments.dtype,
                 "fixture_sha256": fixture.sha256,
