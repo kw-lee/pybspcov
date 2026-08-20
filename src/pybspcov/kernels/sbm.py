@@ -15,7 +15,9 @@ from pybspcov.kernels.bm import (
     initialize_bm_state,
     pack_lower_triangle_column_major,
 )
-from pybspcov.kernels.covariance import update_covariance_column
+from pybspcov.kernels.covariance import (
+    _update_covariance_column_from_conditional_precision,
+)
 from pybspcov.sampling.gig import _sample_gig_batch, sample_gig
 
 
@@ -407,13 +409,14 @@ def sbm_sweep(
             jax.random.normal(beta_key, (padded_count,), dtype=dtype),
         )
         beta = jnp.where(moments.active, beta_mean + beta_noise, 0.0)
-        covariance, precision = update_covariance_column(
+        covariance, precision = _update_covariance_column_from_conditional_precision(
             current.covariance,
             current.precision,
             column_array,
             indices,
             beta,
             gamma,
+            moments.conditional_precision,
         )
 
         phi_values, psi_values, tau_values, scales_accepted = _update_sbm_local_scales(
@@ -562,13 +565,14 @@ def compact_sbm_sweep(
             .at[active_positions]
             .add(compact_beta)
         )
-        covariance, precision = update_covariance_column(
+        covariance, precision = _update_covariance_column_from_conditional_precision(
             current.covariance,
             current.precision,
             column_array,
             indices,
             beta,
             gamma,
+            conditional_precision,
         )
 
         phi_values, psi_values, tau_values, scales_accepted = _update_sbm_local_scales(
