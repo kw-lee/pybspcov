@@ -8,14 +8,24 @@ from pybspcov.estimators import (
     SBMSPCov,
     ThresholdPPP,
 )
+from pybspcov.model_selection import (
+    BandCVResult,
+    ThresholdCVResult,
+    cross_validate_band_ppp,
+    cross_validate_threshold_ppp,
+)
 
 __all__ = [
     "BMDiagnostics",
     "BMSPCov",
+    "BandCVResult",
     "BandPPP",
     "PosteriorSummary",
     "SBMDiagnostics",
     "SBMSPCov",
+    "ThresholdCVResult",
     "ThresholdPPP",
     "__version__",
+    "cross_validate_band_ppp",
+    "cross_validate_threshold_ppp",
 ]
