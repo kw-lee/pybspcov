@@ -168,15 +168,16 @@ class FakeEstimator:
         return self
 
 
-def test_public_runner_uses_fresh_estimators_keys_and_synchronizes_outputs() -> None:
+def test_repeated_runner_uses_one_vmapped_four_chain_fit_per_cpu_run() -> None:
+    """Catch accidentally timing single-chain or sequential CPU fits."""
     benchmark = _benchmark_module()
-    fit_keys: list[bytes] = []
-    blocked: list[str] = []
     configurations: list[dict[str, object]] = []
     estimators: list[FakeEstimator] = []
+    fit_keys: list[bytes] = []
+    blocked: list[str] = []
 
     def estimator_factory(**configuration: object) -> FakeEstimator:
-        configurations.append(configuration)
+        configurations.append(dict(configuration))
         estimator = FakeEstimator(
             index=len(estimators),
             fit_keys=fit_keys,
@@ -185,156 +186,90 @@ def test_public_runner_uses_fresh_estimators_keys_and_synchronizes_outputs() -> 
         estimators.append(estimator)
         return estimator
 
-    clock_values = iter([0.0, 5.0, 10.0, 12.0, 20.0, 23.0, 30.0, 34.0])
-    memory_phases: list[str] = []
-
-    def memory_probe(phase: str) -> int:
-        memory_phases.append(phase)
-        return {"before": 100, "after": 140, "peak": 180}[phase]
-
-    summary = benchmark.run_public_fit_benchmark(
-        np.asarray(
-            [
-                [-1.0, 0.0],
-                [-0.6, 0.4],
-                [-0.2, -0.4],
-                [0.2, 0.2],
-                [0.6, -0.2],
-                [1.0, 0.0],
-            ],
-            dtype=np.float32,
-        ),
-        np.asarray([[2.0, 0.0], [0.0, 3.0]], dtype=np.float32),
+    clock_values = iter([0.0, 5.0, 10.0, 30.0, 40.0, 64.0])
+    result = benchmark.run_repeated_fit_benchmark(
+        np.zeros((6, 2), dtype=np.float32),
+        np.diag([2.0, 3.0]).astype(np.float32),
         estimator_factory=estimator_factory,
         estimator_kwargs={
             "burnin": 2,
             "n_samples": 2,
-            "n_chains": 1,
             "dtype": "float32",
             "device": "cpu",
         },
-        repetitions=3,
+        execution_model="parallel",
+        chain_count=4,
+        repetitions=2,
         seed=41,
         clock=lambda: next(clock_values),
-        memory_probe=memory_probe,
     )
 
-    assert len(estimators) == 4
-    assert (
-        configurations
-        == [
-            {
-                "burnin": 2,
-                "n_samples": 2,
-                "n_chains": 1,
-                "dtype": "float32",
-                "device": "cpu",
-            }
-        ]
-        * 4
+    assert [configuration["n_chains"] for configuration in configurations] == [
+        4,
+        4,
+        4,
+    ]
+    assert result["compile_plus_execution_seconds"] == 5.0
+    assert [
+        repetition["normalized_wall_seconds_per_chain"]
+        for repetition in result["measured_repetitions"]
+    ] == [5.0, 6.0]
+    assert all(
+        repetition["retained_draws"] == 8
+        for repetition in result["measured_repetitions"]
     )
-    assert len(fit_keys) == 4
-    assert len(set(fit_keys)) == 4
+    assert len(set(fit_keys)) == 3
     assert blocked == [
         f"fit-{index}:{leaf}"
-        for index in range(4)
+        for index in range(3)
         for leaf in ("covariance", "posterior", "phi", "screening-mask", "accepted")
     ]
-    assert summary["first_fit_seconds"] == 5.0
-    assert summary["warmed_fit_seconds"] == {
-        "raw": [2.0, 3.0, 4.0],
-        "median": 3.0,
-        "min": 2.0,
-        "max": 4.0,
-    }
-    assert summary["posterior_mean_finite"] is True
-    assert summary["posterior_mean_symmetric"] is True
-    assert summary["posterior_mean_spd"] is True
-    assert summary["dtype"] == "float32"
-    assert summary["accepted_sweeps"] == 4
-    assert summary["rejected_sweeps"] == 0
-    assert summary["active_edges"] == 1
-    assert summary["compact_width"] == 1
-    expected_error = np.linalg.norm(np.diag([0.2, -0.3])) / np.linalg.norm(
-        np.diag([2.0, 3.0])
-    )
-    assert summary["truth_relative_frobenius_error"] == pytest.approx(expected_error)
-    assert memory_phases == ["before", "after", "peak"]
-    assert summary["device_memory_bytes"] == {
-        "before": 100,
-        "after": 140,
-        "peak": 180,
-    }
 
 
-def test_public_runner_uses_only_the_estimator_fit_seam() -> None:
+def test_repeated_runner_uses_four_sequential_single_chain_gpu_fits() -> None:
+    """Catch accidentally vmapping or summing the four GPU chain timings."""
     benchmark = _benchmark_module()
+    configurations: list[dict[str, object]] = []
+    estimators: list[FakeEstimator] = []
 
-    class FitOnlyEstimator:
-        def fit(
-            self,
-            observations: np.ndarray,
-            *,
-            key: jax.Array,
-        ) -> FitOnlyEstimator:
-            del observations, key
-            raise RuntimeError("public fit seam reached")
+    def estimator_factory(**configuration: object) -> FakeEstimator:
+        configurations.append(dict(configuration))
+        estimator = FakeEstimator(index=len(estimators), fit_keys=[], blocked=[])
+        estimators.append(estimator)
+        return estimator
 
-    with pytest.raises(RuntimeError, match="public fit seam reached"):
-        benchmark.run_public_fit_benchmark(
-            np.zeros((4, 2), dtype=np.float32),
-            np.eye(2, dtype=np.float32),
-            estimator_factory=lambda **_: FitOnlyEstimator(),
-            estimator_kwargs={},
-            repetitions=1,
-            seed=7,
-            clock=lambda: 0.0,
-            memory_probe=None,
-        )
-
-
-def test_public_runner_allows_bm_outputs_without_screening_metrics() -> None:
-    benchmark = _benchmark_module()
-
-    class BMEstimator:
-        def fit(
-            self,
-            observations: np.ndarray,
-            *,
-            key: jax.Array,
-        ) -> BMEstimator:
-            del observations, key
-            self.covariance_ = jax.numpy.eye(2, dtype=jax.numpy.float32)
-            self.posterior_samples_packed_ = jax.numpy.ones(
-                (1, 1, 3), dtype=jax.numpy.float32
-            )
-            self.phi_samples_packed_ = jax.numpy.ones(
-                (1, 1, 3), dtype=jax.numpy.float32
-            )
-            self.diagnostics_ = SimpleNamespace(
-                accepted=jax.numpy.ones((1, 1), dtype=jax.numpy.bool_),
-                n_rejected_sweeps=0,
-            )
-            self.dtype_ = np.dtype("float32")
-            return self
-
-    clock_values = iter([0.0, 1.0, 2.0, 3.0])
-    summary = benchmark.run_public_fit_benchmark(
-        np.zeros((4, 2), dtype=np.float32),
-        np.eye(2, dtype=np.float32),
-        estimator_factory=lambda **_: BMEstimator(),
-        estimator_kwargs={},
-        repetitions=1,
-        seed=7,
+    clock_values = iter(float(value) for value in range(18))
+    result = benchmark.run_repeated_fit_benchmark(
+        np.zeros((6, 2), dtype=np.float32),
+        np.diag([2.0, 3.0]).astype(np.float32),
+        estimator_factory=estimator_factory,
+        estimator_kwargs={
+            "burnin": 2,
+            "n_samples": 2,
+            "dtype": "float32",
+            "device": "gpu",
+        },
+        execution_model="sequential",
+        chain_count=4,
+        repetitions=2,
+        seed=41,
         clock=lambda: next(clock_values),
-        memory_probe=None,
     )
 
-    assert summary["active_edges"] is None
-    assert summary["compact_width"] is None
-    assert summary["posterior_mean_finite"] is True
-    assert summary["posterior_mean_symmetric"] is True
-    assert summary["posterior_mean_spd"] is True
+    assert [configuration["n_chains"] for configuration in configurations] == [1] * 9
+    assert result["compile_plus_execution_seconds"] == 1.0
+    assert all(
+        repetition["raw_wall_seconds"] == [1.0, 1.0, 1.0, 1.0]
+        for repetition in result["measured_repetitions"]
+    )
+    assert all(
+        repetition["normalized_wall_seconds_per_chain"] == 1.0
+        for repetition in result["measured_repetitions"]
+    )
+    assert all(
+        repetition["total_wall_seconds"] == 4.0
+        for repetition in result["measured_repetitions"]
+    )
 
 
 def test_cli_selects_bm_and_writes_jsonl_output(
@@ -349,8 +284,8 @@ def test_cli_selects_bm_and_writes_jsonl_output(
         benchmark,
         "generate_fixture",
         lambda **_: SimpleNamespace(
-            observations=np.zeros((6, 2), dtype=np.float32),
-            covariance=np.eye(2, dtype=np.float32),
+            observations=np.zeros((6, 2), dtype=np.float64),
+            covariance=np.eye(2, dtype=np.float64),
             sha256="0" * 64,
         ),
     )
@@ -366,26 +301,20 @@ def test_cli_selects_bm_and_writes_jsonl_output(
         assert isinstance(estimator_kwargs, dict)
         selected_kwargs.append(estimator_kwargs)
         return {
-            "first_fit_seconds": 1.0,
-            "warmed_fit_seconds": {
-                "raw": [0.5],
+            "compile_plus_execution_seconds": 1.0,
+            "execution_model": "parallel",
+            "chain_count": 4,
+            "measured_repetitions": [],
+            "timing_summary": {
                 "median": 0.5,
+                "q1": 0.5,
+                "q3": 0.5,
                 "min": 0.5,
                 "max": 0.5,
             },
-            "posterior_mean_finite": True,
-            "posterior_mean_symmetric": True,
-            "posterior_mean_spd": True,
-            "dtype": "float32",
-            "accepted_sweeps": 1,
-            "rejected_sweeps": 0,
-            "active_edges": None,
-            "compact_width": None,
-            "truth_relative_frobenius_error": 0.1,
-            "device_memory_bytes": None,
         }
 
-    monkeypatch.setattr(benchmark, "run_public_fit_benchmark", fake_runner)
+    monkeypatch.setattr(benchmark, "run_repeated_fit_benchmark", fake_runner)
     monkeypatch.setattr(
         benchmark,
         "_git_provenance",
@@ -414,9 +343,8 @@ def test_cli_selects_bm_and_writes_jsonl_output(
     assert selected_factories == [benchmark.BMSPCov]
     assert selected_kwargs == [
         {
-            "burnin": 1,
-            "n_samples": 2,
-            "n_chains": 1,
+            "burnin": 50,
+            "n_samples": 50,
             "dtype": "float32",
             "device": "cpu",
         }
@@ -429,7 +357,7 @@ def test_cli_emits_one_provenance_record_per_requested_dimension(
 ) -> None:
     benchmark = _benchmark_module()
     fixture_calls: list[tuple[int, float, int, int, str]] = []
-    runner_calls: list[tuple[int, int]] = []
+    runner_calls: list[tuple[int, int, str, int, int]] = []
 
     def fake_fixture(
         *,
@@ -441,9 +369,9 @@ def test_cli_emits_one_provenance_record_per_requested_dimension(
     ) -> SimpleNamespace:
         fixture_calls.append((dimension, density, n_observations, seed, dtype))
         return SimpleNamespace(
-            observations=np.zeros((n_observations, dimension), dtype=np.float32),
-            covariance=np.eye(dimension, dtype=np.float32),
-            precision=np.eye(dimension, dtype=np.float32),
+            observations=np.zeros((n_observations, dimension), dtype=np.float64),
+            covariance=np.eye(dimension, dtype=np.float64),
+            precision=np.eye(dimension, dtype=np.float64),
             sha256=f"{dimension:064x}",
         )
 
@@ -455,29 +383,32 @@ def test_cli_emits_one_provenance_record_per_requested_dimension(
         del truth_covariance
         runner_seed = kwargs["seed"]
         assert isinstance(runner_seed, int)
-        runner_calls.append((observations.shape[1], runner_seed))
+        runner_calls.append(
+            (
+                observations.shape[1],
+                runner_seed,
+                str(kwargs["execution_model"]),
+                int(kwargs["chain_count"]),
+                int(kwargs["repetitions"]),
+            )
+        )
+        assert observations.dtype == np.float32
         return {
-            "first_fit_seconds": 1.0,
-            "warmed_fit_seconds": {
-                "raw": [0.5, 0.6],
+            "compile_plus_execution_seconds": 1.0,
+            "execution_model": "parallel",
+            "chain_count": 4,
+            "measured_repetitions": [],
+            "timing_summary": {
                 "median": statistics.median([0.5, 0.6]),
+                "q1": 0.525,
+                "q3": 0.575,
                 "min": 0.5,
                 "max": 0.6,
             },
-            "posterior_mean_finite": True,
-            "posterior_mean_symmetric": True,
-            "posterior_mean_spd": True,
-            "dtype": "float32",
-            "accepted_sweeps": 3,
-            "rejected_sweeps": 0,
-            "active_edges": 2,
-            "compact_width": 1,
-            "truth_relative_frobenius_error": 0.1,
-            "device_memory_bytes": None,
         }
 
     monkeypatch.setattr(benchmark, "generate_fixture", fake_fixture)
-    monkeypatch.setattr(benchmark, "run_public_fit_benchmark", fake_runner)
+    monkeypatch.setattr(benchmark, "run_repeated_fit_benchmark", fake_runner)
     monkeypatch.setattr(
         benchmark,
         "_git_provenance",
@@ -505,11 +436,13 @@ def test_cli_emits_one_provenance_record_per_requested_dimension(
             "--n-factor",
             "3",
             "--burnin",
-            "1",
+            "50",
             "--samples",
-            "2",
+            "50",
+            "--chains",
+            "4",
             "--repetitions",
-            "2",
+            "10",
             "--seed",
             "19",
         ]
@@ -518,47 +451,45 @@ def test_cli_emits_one_provenance_record_per_requested_dimension(
     records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [record["dimension"] for record in records] == [25, 50, 100, 200]
     assert fixture_calls == [
-        (dimension, 0.05, dimension * 3, 19, "float32")
+        (dimension, 0.05, dimension * 3, 19, "float64")
         for dimension in (25, 50, 100, 200)
     ]
-    assert runner_calls == [(25, 19), (50, 19), (100, 19), (200, 19)]
+    assert runner_calls == [
+        (dimension, 19, "parallel", 4, 10) for dimension in (25, 50, 100, 200)
+    ]
     for record in records:
         assert record.keys() >= {
-            "accepted_sweeps",
-            "active_edges",
             "benchmark",
             "burnin",
-            "compact_width",
+            "chain_count",
+            "compile_plus_execution_seconds",
             "density",
             "device",
-            "device_memory_bytes",
             "dimension",
             "dtype",
             "environment",
-            "first_fit_seconds",
+            "execution_model",
             "fixture_sha256",
             "git",
+            "measured_repetitions",
             "n_observations",
-            "posterior_mean_finite",
-            "posterior_mean_spd",
-            "posterior_mean_symmetric",
-            "rejected_sweeps",
             "repetitions",
             "samples",
             "schema_version",
             "seed",
-            "truth_relative_frobenius_error",
-            "warmed_fit_seconds",
+            "timing_summary",
         }
         assert record["benchmark"] == "sbm-public-scaling"
-        assert record["schema_version"] == "1.0"
+        assert record["schema_version"] == "2.0"
         assert record["device"] == "cpu"
         assert record["dtype"] == "float32"
         assert record["density"] == 0.05
         assert record["n_observations"] == record["dimension"] * 3
-        assert record["burnin"] == 1
-        assert record["samples"] == 2
-        assert record["repetitions"] == 2
+        assert record["burnin"] == 50
+        assert record["samples"] == 50
+        assert record["chain_count"] == 4
+        assert record["execution_model"] == "parallel"
+        assert record["repetitions"] == 10
         assert record["seed"] == 19
         assert record["fixture_sha256"] == f"{record['dimension']:064x}"
         assert record["git"] == {"revision": "abc123", "dirty": False}
