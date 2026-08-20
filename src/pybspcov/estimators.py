@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+from pybspcov.kernels.bandppp import sample_bandppp_chains
 from pybspcov.kernels.bm import (
     BMPackedChainResult,
     initialize_bm_state,
@@ -35,9 +36,9 @@ type _DTypeName = Literal["float32", "float64"]
 type _DeviceName = Literal["cpu", "gpu", "cuda"]
 type _DeviceRequest = _DeviceName | jax.Device | None
 type _CutoffMethod = Literal["fnr", "correlation"]
-type _ProbabilityInput = ArrayLike | Sequence[float]
 type _BMRunner = Callable[..., BMPackedChainResult]
 type _SBMRunner = Callable[..., SBMPackedChainResult]
+type _BandPPPRunner = Callable[..., tuple[Array, Array]]
 
 
 @dataclass(frozen=True)
@@ -106,6 +107,14 @@ def _compile_sbm_chains() -> _SBMRunner:
     )
 
 
+@cache
+def _compile_bandppp_chains() -> _BandPPPRunner:
+    return jax.jit(
+        sample_bandppp_chains,
+        static_argnames=("n_samples",),
+    )
+
+
 def _validate_integer(name: str, value: int, *, minimum: int) -> None:
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError(f"{name} must be an integer")
@@ -155,6 +164,25 @@ def _validate_bounded_scalar(
         (scalar >= lower) & (scalar <= upper)
     ):
         raise ValueError(f"{name} must be between {lower:g} and {upper:g}")
+
+
+def _validate_optional_epsilon(value: object) -> None:
+    if value is None:
+        return
+    try:
+        scalar = jnp.asarray(value)
+    except (TypeError, ValueError) as error:
+        raise TypeError("epsilon must be a real scalar") from error
+    if scalar.ndim != 0:
+        raise ValueError("epsilon must be a scalar")
+    if (
+        not jnp.issubdtype(scalar.dtype, jnp.number)
+        or jnp.issubdtype(scalar.dtype, jnp.complexfloating)
+        or jnp.issubdtype(scalar.dtype, jnp.bool_)
+    ):
+        raise TypeError("epsilon must be a real scalar")
+    if not bool(jnp.isfinite(scalar)) or not bool(scalar >= 0.0):
+        raise ValueError("epsilon must be finite and non-negative")
 
 
 def _validate_sbm_configuration(
@@ -270,7 +298,7 @@ class _PosteriorSummariesMixin:
             raise AttributeError(f"{method_name} is available only after fit") from None
 
     @staticmethod
-    def _probabilities(probs: _ProbabilityInput, packed: Array) -> Array:
+    def _probabilities(probs: ArrayLike | Sequence[float], packed: Array) -> Array:
         try:
             values = jnp.asarray(probs)
         except (TypeError, ValueError) as error:
@@ -312,7 +340,7 @@ class _PosteriorSummariesMixin:
 
     def quantile(
         self,
-        probs: _ProbabilityInput = (0.025, 0.5, 0.975),
+        probs: ArrayLike | Sequence[float] = (0.025, 0.5, 0.975),
     ) -> Array:
         """Return elementwise posterior covariance quantiles."""
         packed = self._require_posterior_samples("quantile")
@@ -330,7 +358,7 @@ class _PosteriorSummariesMixin:
 
     def summary(
         self,
-        probs: _ProbabilityInput = (0.025, 0.25, 0.5, 0.75, 0.975),
+        probs: ArrayLike | Sequence[float] = (0.025, 0.25, 0.5, 0.75, 0.975),
     ) -> PosteriorSummary:
         """Return elementwise posterior statistics pooled across all chains."""
         packed = self._require_posterior_samples("summary")
@@ -378,6 +406,173 @@ class _PosteriorSummariesMixin:
         )
 
 
+class BandPPP(_PosteriorSummariesMixin):
+    """Post-processed posterior estimator for a banded covariance matrix.
+
+    ``X`` follows upstream ``bspcov::bandPPP``: rows are observations,
+    columns are variables, and the posterior scale uses ``X.T @ X`` without
+    silently centering the data. Each chain consists of independent
+    inverse-Wishart draws, followed by banding and an eigenvalue-floor
+    adjustment; no burn-in is required.
+
+    Args:
+        bandwidth: R's ``k`` parameter. Entries more than this many diagonals
+            from the main diagonal are set to zero.
+        epsilon: R's ``eps`` eigenvalue floor. The upstream default is used
+            when omitted.
+        prior_scale: R's inverse-Wishart scale ``A``. Defaults to identity.
+        prior_df: R's inverse-Wishart degrees of freedom ``nu``. Defaults to
+            ``p + bandwidth`` after the feature dimension is known.
+        n_samples: Number of retained posterior draws per chain.
+        n_chains: Number of independent posterior chains.
+        dtype: JAX floating-point dtype.
+        device: JAX device or CPU/GPU platform request.
+    """
+
+    covariance_: Array
+    posterior_samples_packed_: Array
+    adjusted_draws_: Array
+    epsilon_: Array
+    prior_scale_: Array
+    prior_df_: Array
+    posterior_scale_: Array
+    posterior_df_: Array
+    n_features_in_: int
+    n_observations_: int
+    dtype_: jnp.dtype
+    device_: jax.Device
+
+    def __init__(
+        self,
+        bandwidth: int,
+        *,
+        epsilon: float | Array | None = None,
+        prior_scale: ArrayLike | None = None,
+        prior_df: float | Array | None = None,
+        n_samples: int = 2000,
+        n_chains: int = 1,
+        dtype: _DTypeName = "float64",
+        device: _DeviceRequest = None,
+    ) -> None:
+        _validate_integer("bandwidth", bandwidth, minimum=1)
+        _validate_configuration(n_samples, 0, n_chains, dtype, device)
+        _validate_optional_epsilon(epsilon)
+        self.bandwidth = bandwidth
+        self.epsilon = epsilon
+        self.prior_scale = prior_scale
+        self.prior_df = prior_df
+        self.n_samples = n_samples
+        self.n_chains = n_chains
+        self.dtype = dtype
+        self.device = device
+
+    @property
+    def posterior_samples_(self) -> Array:
+        """Reconstruct full covariance draws from packed fitted storage."""
+        try:
+            packed = self.posterior_samples_packed_
+            dimension = self.n_features_in_
+        except AttributeError:
+            raise AttributeError(
+                "posterior_samples_ is available only after fit"
+            ) from None
+        return unpack_lower_triangle_column_major(packed, dimension=dimension)
+
+    def fit(self, X: ArrayLike, *, key: Array) -> Self:
+        """Draw the inverse-Wishart posterior and apply BandPPP processing."""
+        _validate_key(key)
+        _validate_integer("bandwidth", self.bandwidth, minimum=1)
+        _validate_configuration(
+            self.n_samples,
+            0,
+            self.n_chains,
+            self.dtype,
+            self.device,
+        )
+        _validate_optional_epsilon(self.epsilon)
+        if self.dtype == "float64" and not _x64_enabled():
+            raise RuntimeError(
+                "dtype='float64' requires JAX X64 mode. Set JAX_ENABLE_X64=1 "
+                "before starting Python."
+            )
+        target = _resolve_device(self.device)
+        dtype = jnp.dtype(self.dtype)
+
+        with jax.default_device(target):
+            try:
+                raw_x = jnp.asarray(X)
+            except (TypeError, ValueError) as error:
+                raise TypeError("X must be a real numeric array") from error
+            if not jnp.issubdtype(raw_x.dtype, jnp.number) or jnp.issubdtype(
+                raw_x.dtype,
+                jnp.complexfloating,
+            ):
+                raise TypeError("X must be a real numeric array")
+            x = cast(Array, jax.device_put(jnp.asarray(raw_x, dtype=dtype), target))
+            n_observations, dimension = _validate_x(x)
+
+            if self.prior_scale is None:
+                prior_scale = jnp.eye(dimension, dtype=dtype)
+            else:
+                try:
+                    raw_prior_scale = jnp.asarray(self.prior_scale)
+                except (TypeError, ValueError) as error:
+                    raise TypeError(
+                        "prior_scale must be a real numeric array"
+                    ) from error
+                if (
+                    not jnp.issubdtype(raw_prior_scale.dtype, jnp.number)
+                    or jnp.issubdtype(raw_prior_scale.dtype, jnp.complexfloating)
+                    or jnp.issubdtype(raw_prior_scale.dtype, jnp.bool_)
+                ):
+                    raise TypeError("prior_scale must be a real numeric array")
+                prior_scale = jnp.asarray(raw_prior_scale, dtype=dtype)
+            _validate_bandppp_prior_scale(prior_scale, dimension)
+            prior_df = _bandppp_prior_df(
+                self.prior_df,
+                default=dimension + self.bandwidth,
+                dimension=dimension,
+                dtype=dtype,
+            )
+            posterior_df = prior_df + n_observations
+            posterior_scale = x.T @ x + prior_scale
+            epsilon = jnp.asarray(
+                (jnp.log(self.bandwidth) ** 2)
+                * (self.bandwidth + jnp.log(dimension))
+                / n_observations
+                if self.epsilon is None
+                else self.epsilon,
+                dtype=dtype,
+            )
+            chain_keys = jax.random.split(jax.device_put(key, target), self.n_chains)
+            packed, adjusted = _compile_bandppp_chains()(
+                chain_keys,
+                posterior_scale,
+                posterior_df,
+                jnp.asarray(self.bandwidth, dtype=jnp.int32),
+                epsilon,
+                n_samples=self.n_samples,
+            )
+            packed.block_until_ready()
+
+        self.posterior_samples_packed_ = packed
+        self.covariance_ = unpack_lower_triangle_column_major(
+            jnp.mean(packed, axis=(0, 1)),
+            dimension=dimension,
+        )
+        self.adjusted_draws_ = adjusted
+        self.epsilon_ = epsilon
+        self.prior_scale_ = prior_scale
+        self.prior_df_ = prior_df
+        self.posterior_scale_ = posterior_scale
+        self.posterior_df_ = posterior_df
+        self.n_features_in_ = dimension
+        self.n_observations_ = n_observations
+        self.dtype_ = dtype
+        self.device_ = target
+        return self
+
+
 def _validate_initial_covariance(covariance: Array, dimension: int) -> None:
     if covariance.shape != (dimension, dimension):
         raise ValueError(
@@ -398,6 +593,48 @@ def _validate_initial_covariance(covariance: Array, dimension: int) -> None:
         raise ValueError("initial_covariance must be symmetric")
     if not bool(jnp.all(jnp.linalg.eigvalsh(covariance) > 0.0)):
         raise ValueError("initial_covariance must be positive definite")
+
+
+def _validate_bandppp_prior_scale(scale: Array, dimension: int) -> None:
+    if scale.shape != (dimension, dimension):
+        raise ValueError(
+            "prior_scale must have shape "
+            f"({dimension}, {dimension}); received {scale.shape}"
+        )
+    if not bool(jnp.all(jnp.isfinite(scale))):
+        raise ValueError("prior_scale must contain only finite values")
+    tolerance = 1e-5 if scale.dtype == jnp.float32 else 1e-12
+    if not bool(jnp.allclose(scale, scale.T, rtol=tolerance, atol=tolerance)):
+        raise ValueError("prior_scale must be symmetric")
+    if not bool(jnp.all(jnp.linalg.eigvalsh(scale) > 0.0)):
+        raise ValueError("prior_scale must be positive definite")
+
+
+def _bandppp_prior_df(
+    value: object,
+    *,
+    default: int,
+    dimension: int,
+    dtype: jnp.dtype,
+) -> Array:
+    try:
+        raw = jnp.asarray(default if value is None else value)
+    except (TypeError, ValueError) as error:
+        raise TypeError("prior_df must be a real scalar") from error
+    if raw.ndim != 0:
+        raise ValueError("prior_df must be a scalar")
+    if (
+        not jnp.issubdtype(raw.dtype, jnp.number)
+        or jnp.issubdtype(raw.dtype, jnp.complexfloating)
+        or jnp.issubdtype(raw.dtype, jnp.bool_)
+    ):
+        raise TypeError("prior_df must be a real scalar")
+    scalar = jnp.asarray(raw, dtype=dtype)
+    if not bool(jnp.isfinite(scalar)):
+        raise ValueError("prior_df must be finite")
+    if not bool(scalar > dimension - 1):
+        raise ValueError(f"prior_df must be greater than p - 1 ({dimension - 1})")
+    return scalar
 
 
 class BMSPCov(_PosteriorSummariesMixin):

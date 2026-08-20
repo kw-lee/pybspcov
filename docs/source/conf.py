@@ -50,7 +50,8 @@ nitpick_ignore_regex = [
     (
         "py:class",
         (
-            r"(?:jax\.Array|numpy\.(?:ndarray|bool|number)|"
+            r"(?:collections\.abc\.Sequence|jax\.Array|"
+            r"numpy\.(?:ndarray|bool|number)|"
             r"_DTypeName|_DeviceRequest|_CutoffMethod)"
         ),
     ),
