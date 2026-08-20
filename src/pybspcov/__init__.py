@@ -1,5 +1,6 @@
 from pybspcov._version import __version__
 from pybspcov.estimators import (
+    BandPPP,
     BMDiagnostics,
     BMSPCov,
     PosteriorSummary,
@@ -10,6 +11,7 @@ from pybspcov.estimators import (
 __all__ = [
     "BMDiagnostics",
     "BMSPCov",
+    "BandPPP",
     "PosteriorSummary",
     "SBMDiagnostics",
     "SBMSPCov",

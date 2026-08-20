@@ -90,6 +90,23 @@ Regenerate with exactly `bspcov` 1.0.3 installed and selected on `.libPaths()`:
 Rscript --vanilla reference/r/generate_sbm_public_corr_fixture.R
 ```
 
-Python tests do not invoke R. They compare the public `SBMSPCov` estimator's
-support exactly and compare posterior summaries using six combined batch
-Monte Carlo standard errors.
+## BandPPP posterior fixture
+
+`bandppp_x.csv` and `bandppp_summary.csv` record a public
+`bspcov::bandPPP()` run with bandwidth 1, eigenvalue floor 0.05, seed
+20260820, and 5,000 posterior samples. The summary includes 50-batch Monte
+Carlo standard errors, so Python parity compares independent R and JAX random
+streams using their combined simulation uncertainty instead of expecting
+identical draws. Full R and dependency provenance is in
+`bandppp_session_info.txt`.
+
+Regenerate with exactly `bspcov` 1.0.3 selected on `.libPaths()`:
+
+```text
+Rscript --vanilla reference/r/generate_bandppp_fixture.R
+```
+
+Python tests do not invoke R. The BandPPP test compares independent R and JAX
+posterior means using six combined batch Monte Carlo standard errors. The SBM
+tests compare support exactly and posterior summaries with the same statistical
+tolerance principle.

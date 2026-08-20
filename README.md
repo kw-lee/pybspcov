@@ -5,22 +5,23 @@
 estimation.
 
 > [!IMPORTANT]
-> This development repository contains the initial `BMSPCov` and `SBMSPCov`
-> estimators. A published package release is not yet available.
+> This development repository contains `BandPPP`, `BMSPCov`, and `SBMSPCov`.
+> A published package release is not yet available.
 
 Repository: <https://github.com/kw-lee/pybspcov>
 
 ## Initial scope
 
-The package provides `BMSPCov`, based on the beta-mixture shrinkage prior, and
-`SBMSPCov`, based on the screened beta-mixture shrinkage prior.
+The package provides `BandPPP`, a post-processed inverse-Wishart posterior for
+banded covariance matrices; `BMSPCov`, based on the beta-mixture shrinkage
+prior; and `SBMSPCov`, based on the screened beta-mixture shrinkage prior.
 
 The implementation uses JAX and XLA for CPU and NVIDIA GPU execution. The
 package itself does not contain custom C, C++, or CUDA extensions.
 
 ## Quickstart
 
-Run both estimators on a small centered data matrix:
+Run the BM and SBM estimators on a small centered data matrix:
 
 ```bash
 uv run python examples/quickstart.py
@@ -59,7 +60,7 @@ float64 and R reference results before scientific use.
 Enable the default float64 path before Python starts with
 `JAX_ENABLE_X64=1`.
 
-Both estimators provide `estimate()`, `quantile()`, and `summary()` after
+All estimators provide `estimate()`, `quantile()`, and `summary()` after
 fitting. These methods pool retained draws across all chains, matching the R
 `bspcov` post-processing convention. Quantiles have shape `(n_probs, p, p)`;
 `PosteriorSummary` contains the pooled mean, sample standard deviation,
