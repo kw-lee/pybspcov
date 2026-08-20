@@ -3,7 +3,7 @@
 `pybspcov` is a pure-Python, JAX-based port of the R package
 [`bspcov`](https://github.com/statjs/bspcov).
 
-The development package includes `BandPPP`, `BMSPCov`, and `SBMSPCov`.
+The development package includes `BandPPP`, `ThresholdPPP`, `BMSPCov`, and `SBMSPCov`.
 
 ## BandPPP contract and example
 
@@ -125,6 +125,9 @@ complete runtime provenance.
 :caption: Contents
 
 installation
+datasets
+visualization
+parity
 api
 development
 ```

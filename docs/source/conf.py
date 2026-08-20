@@ -56,4 +56,13 @@ nitpick_ignore_regex = [
         ),
     ),
 ]
+nitpick_ignore = [
+    ("py:class", "ArrayLike"),
+    ("py:class", "DTypeName"),
+    ("py:class", "PlotType"),
+    ("py:class", "ThresholdMethod"),
+    ("py:class", "jaxlib._jax.Device"),
+    ("py:class", "pathlib.Path"),
+]
+
 exclude_patterns = []
