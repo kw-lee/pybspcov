@@ -334,12 +334,7 @@ def bm_sweep(
         tau = current.tau.at[indices, column].set(tau_values)
         tau = tau.at[column, indices].set(tau_values)
         updated = BMState(covariance, precision, phi, psi, tau)
-        finite = jnp.logical_and.reduce(
-            jnp.stack([jnp.all(jnp.isfinite(value)) for value in updated])
-        )
-        accepted = (
-            sweep_accepted & gamma_draw.accepted & jnp.all(phi_draws.accepted) & finite
-        )
+        accepted = sweep_accepted & gamma_draw.accepted & jnp.all(phi_draws.accepted)
         return updated, current_key, accepted
 
     updated, _, accepted = jax.lax.fori_loop(
@@ -348,6 +343,10 @@ def bm_sweep(
         update_column,
         (state, key, jnp.asarray(True)),
     )
+    finite = jnp.logical_and.reduce(
+        jnp.stack([jnp.all(jnp.isfinite(value)) for value in updated])
+    )
+    accepted = accepted & finite
     committed = jax.lax.cond(
         accepted,
         lambda _: updated,
