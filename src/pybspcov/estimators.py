@@ -3,7 +3,8 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import cache
-from typing import Literal, Self, cast
+from importlib import import_module
+from typing import Any, Literal, Self, cast
 
 import jax
 import jax.numpy as jnp
@@ -345,6 +346,34 @@ class _PosteriorSummariesMixin:
             quantiles=self.quantile(probabilities),
             n_chains=packed.shape[0],
             n_samples_per_chain=packed.shape[1],
+        )
+
+    def to_arviz(self) -> Any:
+        """Return retained covariance draws as an ArviZ DataTree.
+
+        ArviZ is an optional dependency. Install pybspcov[analysis] before
+        calling this method. Conversion transfers fitted JAX arrays to host
+        memory while preserving their chain and draw axes.
+        """
+        packed = self._require_posterior_samples("to_arviz")
+        try:
+            arviz = import_module("arviz")
+        except ModuleNotFoundError as error:
+            if error.name != "arviz":
+                raise
+            raise ImportError(
+                "to_arviz requires ArviZ; install pybspcov[analysis]"
+            ) from None
+
+        covariance = unpack_lower_triangle_column_major(
+            packed,
+            dimension=self.n_features_in_,
+        )
+        features = range(self.n_features_in_)
+        return arviz.from_dict(
+            {"posterior": {"covariance": jax.device_get(covariance)}},
+            dims={"covariance": ["row", "column"]},
+            coords={"row": features, "column": features},
         )
 
 

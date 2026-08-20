@@ -29,6 +29,31 @@ standard deviations use `ddof=1`, as in the upstream R summary, and all array
 results remain on the fitted JAX device. Probability inputs must be non-empty,
 real, finite, and between zero and one.
 
+## ArviZ analysis
+
+Install `pybspcov` with the `analysis` extra to add ArviZ and its Matplotlib
+plotting backend. Both estimators then expose their retained covariance draws as
+an ArviZ DataTree:
+
+```python
+import arviz as az
+
+inference_data = model.to_arviz()
+summary = az.summary(inference_data, var_names=["covariance"])
+trace = az.plot_trace(
+    inference_data,
+    var_names=["covariance"],
+    coords={"row": [0], "column": [1]},
+    backend="matplotlib",
+)
+```
+
+The `posterior/covariance` variable has dimensions `chain`, `draw`, `row`,
+and `column`. Conversion preserves separate chains for ESS and R-hat
+calculation, reconstructs each symmetric covariance matrix, and transfers the
+result to host memory. Sampler acceptance values include burn-in sweeps and
+therefore are not exported as an ArviZ `sample_stats` group.
+
 ## SBMSPCov contract
 
 `SBMSPCov` follows the same centered-input, typed-key, sample-layout, dtype, and

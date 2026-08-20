@@ -28,11 +28,13 @@ Issues = "https://github.com/kw-lee/pybspcov/issues"
 Repository = "https://github.com/kw-lee/pybspcov"
 
 [project.optional-dependencies]
+analysis = ["arviz[matplotlib]>=1.2,<2"]
 cuda12 = ["jax[cuda12]>=0.11.0,<0.12"]
 
 [dependency-groups]
 benchmark = ["matplotlib>=3.10,<4"]
 dev = [
+  "arviz[matplotlib]>=1.2,<2",
   "build>=1.3",
   "mypy>=1.17",
   "pre-commit>=4.3",

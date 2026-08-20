@@ -66,6 +66,32 @@ fitting. These methods pool retained draws across all chains, matching the R
 requested quantiles, and fitted chain/sample counts. Returned statistics remain
 JAX arrays on the fitted device.
 
+Install the optional analysis dependencies to use ArviZ diagnostics and plots:
+
+```bash
+uv sync --extra analysis
+```
+
+```python
+import arviz as az
+
+inference_data = model.to_arviz()
+diagnostics = az.summary(inference_data, var_names=["covariance"])
+trace = az.plot_trace(
+    inference_data,
+    var_names=["covariance"],
+    coords={"row": [0], "column": [1]},
+    backend="matplotlib",
+)
+```
+
+`to_arviz()` preserves the fitted chain and retained-draw axes and exposes the
+full symmetric matrix as `posterior/covariance` with `row` and `column`
+coordinates. Conversion transfers the covariance draws from their JAX device
+to host memory. ArviZ supplies effective sample size, R-hat, Monte Carlo
+standard errors, intervals, and visualization; pybspcov does not duplicate
+those diagnostics in its lightweight `summary()`.
+
 `SBMSPCov` has the same input, dtype, device, key, and packed-sample contracts.
 With `device=None`, JAX selects its default device; `device="cpu"` and
 `device="gpu"` request those backends explicitly and fail clearly when the
