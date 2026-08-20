@@ -6,6 +6,7 @@ from pybspcov.estimators import (
     PosteriorSummary,
     SBMDiagnostics,
     SBMSPCov,
+    ThresholdPPP,
 )
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     "PosteriorSummary",
     "SBMDiagnostics",
     "SBMSPCov",
+    "ThresholdPPP",
     "__version__",
 ]
