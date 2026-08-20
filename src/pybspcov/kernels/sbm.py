@@ -11,10 +11,13 @@ from pybspcov.kernels.bm import (
     BMState,
     BMSweepResult,
     _bm_column_moments,
+    _sample_beta_from_precision,
     initialize_bm_state,
     pack_lower_triangle_column_major,
 )
-from pybspcov.kernels.covariance import update_covariance_column
+from pybspcov.kernels.covariance import (
+    _update_covariance_column_from_conditional_precision,
+)
 from pybspcov.sampling.gig import _sample_gig_batch, sample_gig
 
 
@@ -406,13 +409,14 @@ def sbm_sweep(
             jax.random.normal(beta_key, (padded_count,), dtype=dtype),
         )
         beta = jnp.where(moments.active, beta_mean + beta_noise, 0.0)
-        covariance, precision = update_covariance_column(
+        covariance, precision = _update_covariance_column_from_conditional_precision(
             current.covariance,
             current.precision,
             column_array,
             indices,
             beta,
             gamma,
+            moments.conditional_precision,
         )
 
         phi_values, psi_values, tau_values, scales_accepted = _update_sbm_local_scales(
@@ -439,10 +443,7 @@ def sbm_sweep(
         tau = current.tau.at[indices, column].set(tau_values)
         tau = tau.at[column, indices].set(tau_values)
         updated = BMState(covariance, precision, phi, psi, tau)
-        finite = jnp.logical_and.reduce(
-            jnp.stack([jnp.all(jnp.isfinite(value)) for value in updated])
-        )
-        accepted = sweep_accepted & gamma_draw.accepted & scales_accepted & finite
+        accepted = sweep_accepted & gamma_draw.accepted & scales_accepted
         return updated, current_key, accepted
 
     updated, _, accepted = jax.lax.fori_loop(
@@ -451,6 +452,10 @@ def sbm_sweep(
         update_column,
         (state, key, jnp.asarray(True)),
     )
+    finite = jnp.logical_and.reduce(
+        jnp.stack([jnp.all(jnp.isfinite(value)) for value in updated])
+    )
+    accepted = accepted & finite
     committed = jax.lax.cond(
         accepted,
         lambda _: updated,
@@ -543,15 +548,15 @@ def compact_sbm_sweep(
         beta_precision = jnp.where(lane_outer, unmasked_beta_precision, 0.0)
         beta_precision = beta_precision + jnp.diag((~lane_mask).astype(dtype))
         beta_precision = 0.5 * (beta_precision + beta_precision.T)
-        beta_mean = jnp.linalg.solve(beta_precision, conditional_scatter) / gamma
-        beta_cholesky = jnp.linalg.cholesky(beta_precision)
         dense_beta_noise = jax.random.normal(
             beta_key,
             (padded_count,),
             dtype=dtype,
         )
-        beta_noise = jnp.linalg.solve(
-            beta_cholesky.T,
+        beta_mean, beta_noise = _sample_beta_from_precision(
+            beta_precision,
+            conditional_scatter,
+            gamma,
             dense_beta_noise[active_positions],
         )
         compact_beta = jnp.where(lane_mask, beta_mean + beta_noise, 0.0)
@@ -560,13 +565,14 @@ def compact_sbm_sweep(
             .at[active_positions]
             .add(compact_beta)
         )
-        covariance, precision = update_covariance_column(
+        covariance, precision = _update_covariance_column_from_conditional_precision(
             current.covariance,
             current.precision,
             column_array,
             indices,
             beta,
             gamma,
+            conditional_precision,
         )
 
         phi_values, psi_values, tau_values, scales_accepted = _update_sbm_local_scales(
@@ -610,10 +616,7 @@ def compact_sbm_sweep(
         tau = current.tau.at[indices, column].set(tau_values_dense)
         tau = tau.at[column, indices].set(tau_values_dense)
         updated = BMState(covariance, precision, phi, psi, tau)
-        finite = jnp.logical_and.reduce(
-            jnp.stack([jnp.all(jnp.isfinite(value)) for value in updated])
-        )
-        accepted = sweep_accepted & gamma_draw.accepted & scales_accepted & finite
+        accepted = sweep_accepted & gamma_draw.accepted & scales_accepted
         return updated, current_key, accepted
 
     updated, _, accepted = jax.lax.fori_loop(
@@ -622,6 +625,10 @@ def compact_sbm_sweep(
         update_column,
         (state, key, jnp.asarray(True)),
     )
+    finite = jnp.logical_and.reduce(
+        jnp.stack([jnp.all(jnp.isfinite(value)) for value in updated])
+    )
+    accepted = accepted & finite
     committed = jax.lax.cond(
         accepted,
         lambda _: updated,

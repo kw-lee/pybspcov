@@ -227,7 +227,7 @@ def test_repeated_runner_uses_one_vmapped_four_chain_fit_per_cpu_run() -> None:
 
 
 def test_repeated_runner_uses_four_sequential_single_chain_gpu_fits() -> None:
-    """Catch accidentally vmapping or summing the four GPU chain timings."""
+    """Catch failing to sum the intentionally sequential GPU chain timings."""
     benchmark = _benchmark_module()
     configurations: list[dict[str, object]] = []
     estimators: list[FakeEstimator] = []
@@ -270,6 +270,99 @@ def test_repeated_runner_uses_four_sequential_single_chain_gpu_fits() -> None:
         repetition["total_wall_seconds"] == 4.0
         for repetition in result["measured_repetitions"]
     )
+
+
+def test_repeated_runner_uses_one_vmapped_gpu_fit_with_requested_chain_count() -> None:
+    """Catch GPU vmap mode falling back to sequential single-chain fits."""
+    benchmark = _benchmark_module()
+    configurations: list[dict[str, object]] = []
+    estimators: list[FakeEstimator] = []
+
+    def estimator_factory(**configuration: object) -> FakeEstimator:
+        configurations.append(dict(configuration))
+        estimator = FakeEstimator(index=len(estimators), fit_keys=[], blocked=[])
+        estimators.append(estimator)
+        return estimator
+
+    clock_values = iter([0.0, 1.0, 2.0, 10.0])
+    result = benchmark.run_repeated_fit_benchmark(
+        np.zeros((6, 2), dtype=np.float32),
+        np.diag([2.0, 3.0]).astype(np.float32),
+        estimator_factory=estimator_factory,
+        estimator_kwargs={
+            "burnin": 2,
+            "n_samples": 2,
+            "dtype": "float32",
+            "device": "gpu",
+        },
+        execution_model="vmap",
+        chain_count=4,
+        repetitions=1,
+        seed=41,
+        clock=lambda: next(clock_values),
+    )
+
+    assert [configuration["n_chains"] for configuration in configurations] == [4, 4]
+    assert len(estimators) == 2
+    assert result["measured_repetitions"][0]["raw_wall_seconds"] == [8.0]
+    assert result["measured_repetitions"][0]["total_wall_seconds"] == 8.0
+    assert result["measured_repetitions"][0]["normalized_wall_seconds_per_chain"] == 2.0
+
+
+@pytest.mark.parametrize(
+    ("execution_option", "expected_execution_model"),
+    [(None, "sequential"), ("vmap", "vmap")],
+)
+def test_gpu_cli_forwards_selectable_execution_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    execution_option: str | None,
+    expected_execution_model: str,
+) -> None:
+    """Catch GPU CLI mode selection being ignored or falling back to sequential."""
+    benchmark = _benchmark_module()
+    forwarded_execution_models: list[str] = []
+
+    monkeypatch.setattr(
+        benchmark,
+        "generate_fixture",
+        lambda **_: SimpleNamespace(
+            observations=np.zeros((6, 2), dtype=np.float64),
+            covariance=np.eye(2, dtype=np.float64),
+            sha256="0" * 64,
+        ),
+    )
+
+    def fake_runner(
+        observations: np.ndarray,
+        truth_covariance: np.ndarray,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        del observations, truth_covariance
+        forwarded_execution_models.append(str(kwargs["execution_model"]))
+        return {
+            "compile_plus_execution_seconds": 1.0,
+            "execution_model": expected_execution_model,
+            "chain_count": 4,
+            "measured_repetitions": [],
+            "timing_summary": {
+                "median": 0.5,
+                "q1": 0.5,
+                "q3": 0.5,
+                "min": 0.5,
+                "max": 0.5,
+            },
+        }
+
+    monkeypatch.setattr(benchmark, "run_repeated_fit_benchmark", fake_runner)
+    monkeypatch.setattr(benchmark, "_git_provenance", lambda _: {})
+    monkeypatch.setattr(benchmark, "_environment_metadata", dict)
+    arguments = ["--device", "gpu", "--dimensions", "2", "--repetitions", "1"]
+    if execution_option is not None:
+        arguments.extend(["--execution-mode", execution_option])
+
+    benchmark.main(arguments)
+
+    assert forwarded_execution_models == [expected_execution_model]
 
 
 def test_cli_selects_bm_and_writes_jsonl_output(
@@ -474,6 +567,7 @@ def test_cli_emits_one_provenance_record_per_requested_dimension(
             "measured_repetitions",
             "n_observations",
             "repetitions",
+            "prng_policy",
             "samples",
             "schema_version",
             "seed",
@@ -491,6 +585,68 @@ def test_cli_emits_one_provenance_record_per_requested_dimension(
         assert record["execution_model"] == "parallel"
         assert record["repetitions"] == 10
         assert record["seed"] == 19
+        assert record["prng_policy"] == (
+            "jax.random.key(seed) is split into one warm-up key and one key per "
+            "measured repetition; sequential fits split each repetition key by "
+            "chain, while parallel and vmap fits pass one repetition key to the "
+            "estimator, which derives per-chain keys."
+        )
         assert record["fixture_sha256"] == f"{record['dimension']:064x}"
         assert record["git"] == {"revision": "abc123", "dirty": False}
         assert record["environment"] == {"python": "3.12", "jax": "0.11"}
+
+
+def test_cli_estimator_fixture_dtype_policy_is_forwarded_and_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    benchmark = _benchmark_module()
+    fixture_dtypes: list[str] = []
+
+    def fake_fixture(**kwargs: object) -> SimpleNamespace:
+        fixture_dtypes.append(str(kwargs["dtype"]))
+        return SimpleNamespace(
+            observations=np.zeros((6, 2), dtype=np.float32),
+            covariance=np.eye(2, dtype=np.float32),
+            sha256="0" * 64,
+        )
+
+    monkeypatch.setattr(benchmark, "generate_fixture", fake_fixture)
+    monkeypatch.setattr(
+        benchmark,
+        "run_repeated_fit_benchmark",
+        lambda *_args, **_kwargs: {
+            "compile_plus_execution_seconds": 1.0,
+            "execution_model": "parallel",
+            "chain_count": 1,
+            "measured_repetitions": [],
+            "timing_summary": {
+                "median": 0.5,
+                "q1": 0.5,
+                "q3": 0.5,
+                "min": 0.5,
+                "max": 0.5,
+            },
+        },
+    )
+    monkeypatch.setattr(benchmark, "_git_provenance", lambda _: {})
+    monkeypatch.setattr(benchmark, "_environment_metadata", dict)
+
+    benchmark.main(
+        [
+            "--dtype",
+            "float32",
+            "--fixture-dtype-policy",
+            "estimator",
+            "--dimensions",
+            "2",
+            "--chains",
+            "1",
+            "--repetitions",
+            "1",
+        ]
+    )
+
+    [record] = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert fixture_dtypes == ["float32"]
+    assert record["fixture_dtype_policy"] == "estimator"

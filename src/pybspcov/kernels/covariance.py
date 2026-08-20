@@ -22,6 +22,27 @@ def update_covariance_column(
     block = precision[jnp.ix_(other_indices, other_indices)]
     cross = precision[other_indices, column]
     conditional_precision = block - jnp.outer(cross, cross) / precision[column, column]
+    return _update_covariance_column_from_conditional_precision(
+        covariance,
+        precision,
+        column,
+        other_indices,
+        beta,
+        gamma,
+        conditional_precision,
+    )
+
+
+def _update_covariance_column_from_conditional_precision(
+    covariance: Array,
+    precision: Array,
+    column: Array,
+    other_indices: Array,
+    beta: Array,
+    gamma: Array,
+    conditional_precision: Array,
+) -> tuple[Array, Array]:
+    """Apply one column update using an already computed conditional precision."""
     conditional_times_beta = conditional_precision @ beta
 
     updated_covariance = covariance.at[other_indices, column].set(beta)
