@@ -90,6 +90,45 @@ Regenerate with exactly `bspcov` 1.0.3 installed and selected on `.libPaths()`:
 Rscript --vanilla reference/r/generate_sbm_public_corr_fixture.R
 ```
 
-Python tests do not invoke R. They compare the public `SBMSPCov` estimator's
-support exactly and compare posterior summaries using six combined batch
-Monte Carlo standard errors.
+## BandPPP posterior fixture
+
+`bandppp_x.csv` and `bandppp_summary.csv` record a public
+`bspcov::bandPPP()` run with bandwidth 1, eigenvalue floor 0.05, seed
+20260820, and 5,000 posterior samples. The summary includes 50-batch Monte
+Carlo standard errors, so Python parity compares independent R and JAX random
+streams using their combined simulation uncertainty instead of expecting
+identical draws. Full R and dependency provenance is in
+`bandppp_session_info.txt`.
+
+Regenerate with exactly `bspcov` 1.0.3 selected on `.libPaths()`:
+
+```text
+Rscript --vanilla reference/r/generate_bandppp_fixture.R
+```
+
+Python tests do not invoke R. The BandPPP test compares independent R and JAX
+posterior means using six combined batch Monte Carlo standard errors. The SBM
+tests compare support exactly and posterior summaries with the same statistical
+tolerance principle.
+
+## Cross-validation and SP500 preprocessing fixtures
+
+`band_cv_*` and `threshold_cv_*` record public `cv.bandPPP()` and
+`cv.thresPPP()` results from bspcov 1.0.3 with 1,000 posterior draws per fit.
+The Python tests use independent JAX random streams, require the same selected
+tuning parameter, and compare each score with a documented Monte Carlo and
+fold-assignment tolerance. Regenerate with:
+
+```text
+Rscript --vanilla reference/r/generate_cv_fixture.R tests/fixtures/r/bspcov-1.0.3 /path/to/bspcov-1.0.3-library
+```
+
+`sp500_fixed_*` validates `quantmod::periodReturn` monthly-return semantics,
+sector-then-symbol ordering, centering, and a fixed rank-one factor
+reconstruction independently in R double precision. It intentionally fixes the
+factor rank because Python documents a different automatic selector from the
+upstream optional `hdbinseg` `ah` criterion. Regenerate with:
+
+```text
+Rscript reference/r/generate_sp500_preprocessing_fixture.R
+```

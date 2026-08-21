@@ -5,22 +5,23 @@
 estimation.
 
 > [!IMPORTANT]
-> This development repository contains the initial `BMSPCov` and `SBMSPCov`
-> estimators. A published package release is not yet available.
+> This development repository contains `BandPPP`, `BMSPCov`, and `SBMSPCov`.
+> A published package release is not yet available.
 
 Repository: <https://github.com/kw-lee/pybspcov>
 
 ## Initial scope
 
-The package provides `BMSPCov`, based on the beta-mixture shrinkage prior, and
-`SBMSPCov`, based on the screened beta-mixture shrinkage prior.
+The package provides `BandPPP`, a post-processed inverse-Wishart posterior for
+banded covariance matrices; `BMSPCov`, based on the beta-mixture shrinkage
+prior; and `SBMSPCov`, based on the screened beta-mixture shrinkage prior.
 
 The implementation uses JAX and XLA for CPU and NVIDIA GPU execution. The
 package itself does not contain custom C, C++, or CUDA extensions.
 
 ## Quickstart
 
-Run both estimators on a small centered data matrix:
+Run the BM and SBM estimators on a small centered data matrix:
 
 ```bash
 uv run python examples/quickstart.py
@@ -59,7 +60,7 @@ float64 and R reference results before scientific use.
 Enable the default float64 path before Python starts with
 `JAX_ENABLE_X64=1`.
 
-Both estimators provide `estimate()`, `quantile()`, and `summary()` after
+All estimators provide `estimate()`, `quantile()`, and `summary()` after
 fitting. These methods pool retained draws across all chains, matching the R
 `bspcov` post-processing convention. Quantiles have shape `(n_probs, p, p)`;
 `PosteriorSummary` contains the pooled mean, sample standard deviation,
@@ -98,11 +99,12 @@ With `device=None`, JAX selects its default device; `device="cpu"` and
 requested backend is unavailable. Fitted arrays remain on the selected device.
 Its default `cutoff_method="fnr"` uses `fnr_correlation=0.25`,
 `false_negative_rate=0.05`, and `n_cutoff_simulations=1000`; the alternative
-`cutoff_method="correlation"` uses `retained_fraction=0.2`. Screening runs once
-per fit and all Python chains share `screening_mask_`. This intentionally differs
-from `bspcov` 1.0.3, whose FNR path draws a separate screening cutoff for each
-chain. `screening_cutoff_` is populated only for FNR screening, and
-`diagnostics_` reports active and screened edge counts.
+`cutoff_method="correlation"` uses `retained_fraction=0.2`. Screening runs
+once per fit by default, so all chains share `screening_mask_`.
+Set `screening_scope="chain"` for the per-chain FNR cutoffs and supports used
+by `bspcov` 1.0.3. In that mode, `screening_mask_` has shape `(chain, p, p)`,
+`screening_cutoff_` has shape `(chain,)`, and the screening diagnostics contain
+per-chain tuples. `screening_cutoff_` is populated only for FNR screening.
 
 The checked-in R fixtures validate screening formulas, estimator orchestration,
 and the public correlation-screened SBM posterior on the upstream `p=5`

@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+from pybspcov.kernels.bandppp import sample_bandppp_chains
 from pybspcov.kernels.bm import (
     BMPackedChainResult,
     initialize_bm_state,
@@ -30,14 +31,20 @@ from pybspcov.kernels.screening import (
     fnr_screening_mask,
     pairwise_jeffreys_bayes_factors,
 )
+from pybspcov.kernels.thresholdppp import (
+    ThresholdMethod,
+    sample_thresholdppp_chains,
+)
 
 type _DTypeName = Literal["float32", "float64"]
 type _DeviceName = Literal["cpu", "gpu", "cuda"]
 type _DeviceRequest = _DeviceName | jax.Device | None
 type _CutoffMethod = Literal["fnr", "correlation"]
-type _ProbabilityInput = ArrayLike | Sequence[float]
+type _ScreeningScope = Literal["fit", "chain"]
 type _BMRunner = Callable[..., BMPackedChainResult]
 type _SBMRunner = Callable[..., SBMPackedChainResult]
+type _BandPPPRunner = Callable[..., tuple[Array, Array]]
+type _ThresholdPPPRunner = Callable[..., tuple[Array, Array]]
 
 
 @dataclass(frozen=True)
@@ -74,9 +81,9 @@ class SBMDiagnostics:
     n_rejected_sweeps: int
     n_initial_repairs: int
     initial_variance_floor: float
-    screening_jitter: float
-    n_active_edges: int
-    n_screened_edges: int
+    screening_jitter: float | tuple[float, ...]
+    n_active_edges: int | tuple[int, ...]
+    n_screened_edges: int | tuple[int, ...]
     cutoff_method: str
     dtype: str
     device: str
@@ -103,6 +110,22 @@ def _compile_sbm_chains() -> _SBMRunner:
     return jax.jit(
         sample_compact_sbm_packed_chains,
         static_argnames=("burnin", "n_samples"),
+    )
+
+
+@cache
+def _compile_bandppp_chains() -> _BandPPPRunner:
+    return jax.jit(
+        sample_bandppp_chains,
+        static_argnames=("n_samples",),
+    )
+
+
+@cache
+def _compile_thresholdppp_chains() -> _ThresholdPPPRunner:
+    return jax.jit(
+        sample_thresholdppp_chains,
+        static_argnames=("method", "n_samples"),
     )
 
 
@@ -157,11 +180,31 @@ def _validate_bounded_scalar(
         raise ValueError(f"{name} must be between {lower:g} and {upper:g}")
 
 
+def _validate_optional_epsilon(value: object) -> None:
+    if value is None:
+        return
+    try:
+        scalar = jnp.asarray(value)
+    except (TypeError, ValueError) as error:
+        raise TypeError("epsilon must be a real scalar") from error
+    if scalar.ndim != 0:
+        raise ValueError("epsilon must be a scalar")
+    if (
+        not jnp.issubdtype(scalar.dtype, jnp.number)
+        or jnp.issubdtype(scalar.dtype, jnp.complexfloating)
+        or jnp.issubdtype(scalar.dtype, jnp.bool_)
+    ):
+        raise TypeError("epsilon must be a real scalar")
+    if not bool(jnp.isfinite(scalar)) or not bool(scalar >= 0.0):
+        raise ValueError("epsilon must be finite and non-negative")
+
+
 def _validate_sbm_configuration(
     n_samples: int,
     burnin: int,
     n_chains: int,
     cutoff_method: object,
+    screening_scope: object,
     fnr_correlation: float | Array,
     false_negative_rate: float | Array,
     n_cutoff_simulations: int,
@@ -173,6 +216,8 @@ def _validate_sbm_configuration(
     _validate_integer("n_cutoff_simulations", n_cutoff_simulations, minimum=1)
     if cutoff_method not in {"fnr", "correlation"}:
         raise ValueError("cutoff_method must be 'fnr' or 'correlation'")
+    if screening_scope not in {"fit", "chain"}:
+        raise ValueError("screening_scope must be 'fit' or 'chain'")
     _validate_bounded_scalar(
         "fnr_correlation",
         fnr_correlation,
@@ -270,7 +315,7 @@ class _PosteriorSummariesMixin:
             raise AttributeError(f"{method_name} is available only after fit") from None
 
     @staticmethod
-    def _probabilities(probs: _ProbabilityInput, packed: Array) -> Array:
+    def _probabilities(probs: ArrayLike | Sequence[float], packed: Array) -> Array:
         try:
             values = jnp.asarray(probs)
         except (TypeError, ValueError) as error:
@@ -312,7 +357,7 @@ class _PosteriorSummariesMixin:
 
     def quantile(
         self,
-        probs: _ProbabilityInput = (0.025, 0.5, 0.975),
+        probs: ArrayLike | Sequence[float] = (0.025, 0.5, 0.975),
     ) -> Array:
         """Return elementwise posterior covariance quantiles."""
         packed = self._require_posterior_samples("quantile")
@@ -330,7 +375,7 @@ class _PosteriorSummariesMixin:
 
     def summary(
         self,
-        probs: _ProbabilityInput = (0.025, 0.25, 0.5, 0.75, 0.975),
+        probs: ArrayLike | Sequence[float] = (0.025, 0.25, 0.5, 0.75, 0.975),
     ) -> PosteriorSummary:
         """Return elementwise posterior statistics pooled across all chains."""
         packed = self._require_posterior_samples("summary")
@@ -378,6 +423,315 @@ class _PosteriorSummariesMixin:
         )
 
 
+class BandPPP(_PosteriorSummariesMixin):
+    """Post-processed posterior estimator for a banded covariance matrix.
+
+    ``X`` follows upstream ``bspcov::bandPPP``: rows are observations,
+    columns are variables, and the posterior scale uses ``X.T @ X`` without
+    silently centering the data. Each chain consists of independent
+    inverse-Wishart draws, followed by banding and an eigenvalue-floor
+    adjustment; no burn-in is required.
+
+    Args:
+        bandwidth: R's ``k`` parameter. Entries more than this many diagonals
+            from the main diagonal are set to zero.
+        epsilon: R's ``eps`` eigenvalue floor. The upstream default is used
+            when omitted.
+        prior_scale: R's inverse-Wishart scale ``A``. Defaults to identity.
+        prior_df: R's inverse-Wishart degrees of freedom ``nu``. Defaults to
+            ``p + bandwidth`` after the feature dimension is known.
+        n_samples: Number of retained posterior draws per chain.
+        n_chains: Number of independent posterior chains.
+        dtype: JAX floating-point dtype.
+        device: JAX device or CPU/GPU platform request.
+    """
+
+    covariance_: Array
+    posterior_samples_packed_: Array
+    adjusted_draws_: Array
+    epsilon_: Array
+    prior_scale_: Array
+    prior_df_: Array
+    posterior_scale_: Array
+    posterior_df_: Array
+    n_features_in_: int
+    n_observations_: int
+    dtype_: jnp.dtype
+    device_: jax.Device
+
+    def __init__(
+        self,
+        bandwidth: int,
+        *,
+        epsilon: float | Array | None = None,
+        prior_scale: ArrayLike | None = None,
+        prior_df: float | Array | None = None,
+        n_samples: int = 2000,
+        n_chains: int = 1,
+        dtype: _DTypeName = "float64",
+        device: _DeviceRequest = None,
+    ) -> None:
+        _validate_integer("bandwidth", bandwidth, minimum=1)
+        _validate_configuration(n_samples, 0, n_chains, dtype, device)
+        _validate_optional_epsilon(epsilon)
+        self.bandwidth = bandwidth
+        self.epsilon = epsilon
+        self.prior_scale = prior_scale
+        self.prior_df = prior_df
+        self.n_samples = n_samples
+        self.n_chains = n_chains
+        self.dtype = dtype
+        self.device = device
+
+    @property
+    def posterior_samples_(self) -> Array:
+        """Reconstruct full covariance draws from packed fitted storage."""
+        try:
+            packed = self.posterior_samples_packed_
+            dimension = self.n_features_in_
+        except AttributeError:
+            raise AttributeError(
+                "posterior_samples_ is available only after fit"
+            ) from None
+        return unpack_lower_triangle_column_major(packed, dimension=dimension)
+
+    def fit(self, X: ArrayLike, *, key: Array) -> Self:
+        """Draw the inverse-Wishart posterior and apply BandPPP processing."""
+        _validate_key(key)
+        _validate_integer("bandwidth", self.bandwidth, minimum=1)
+        _validate_configuration(
+            self.n_samples,
+            0,
+            self.n_chains,
+            self.dtype,
+            self.device,
+        )
+        _validate_optional_epsilon(self.epsilon)
+        if self.dtype == "float64" and not _x64_enabled():
+            raise RuntimeError(
+                "dtype='float64' requires JAX X64 mode. Set JAX_ENABLE_X64=1 "
+                "before starting Python."
+            )
+        target = _resolve_device(self.device)
+        dtype = jnp.dtype(self.dtype)
+
+        with jax.default_device(target):
+            try:
+                raw_x = jnp.asarray(X)
+            except (TypeError, ValueError) as error:
+                raise TypeError("X must be a real numeric array") from error
+            if not jnp.issubdtype(raw_x.dtype, jnp.number) or jnp.issubdtype(
+                raw_x.dtype,
+                jnp.complexfloating,
+            ):
+                raise TypeError("X must be a real numeric array")
+            x = cast(Array, jax.device_put(jnp.asarray(raw_x, dtype=dtype), target))
+            n_observations, dimension = _validate_x(x)
+
+            if self.prior_scale is None:
+                prior_scale = jnp.eye(dimension, dtype=dtype)
+            else:
+                try:
+                    raw_prior_scale = jnp.asarray(self.prior_scale)
+                except (TypeError, ValueError) as error:
+                    raise TypeError(
+                        "prior_scale must be a real numeric array"
+                    ) from error
+                if (
+                    not jnp.issubdtype(raw_prior_scale.dtype, jnp.number)
+                    or jnp.issubdtype(raw_prior_scale.dtype, jnp.complexfloating)
+                    or jnp.issubdtype(raw_prior_scale.dtype, jnp.bool_)
+                ):
+                    raise TypeError("prior_scale must be a real numeric array")
+                prior_scale = jnp.asarray(raw_prior_scale, dtype=dtype)
+            _validate_bandppp_prior_scale(prior_scale, dimension)
+            prior_df = _bandppp_prior_df(
+                self.prior_df,
+                default=dimension + self.bandwidth,
+                dimension=dimension,
+                dtype=dtype,
+            )
+            posterior_df = prior_df + n_observations
+            posterior_scale = x.T @ x + prior_scale
+            epsilon = jnp.asarray(
+                (jnp.log(self.bandwidth) ** 2)
+                * (self.bandwidth + jnp.log(dimension))
+                / n_observations
+                if self.epsilon is None
+                else self.epsilon,
+                dtype=dtype,
+            )
+            chain_keys = jax.random.split(jax.device_put(key, target), self.n_chains)
+            packed, adjusted = _compile_bandppp_chains()(
+                chain_keys,
+                posterior_scale,
+                posterior_df,
+                jnp.asarray(self.bandwidth, dtype=jnp.int32),
+                epsilon,
+                n_samples=self.n_samples,
+            )
+            packed.block_until_ready()
+
+        self.posterior_samples_packed_ = packed
+        self.covariance_ = unpack_lower_triangle_column_major(
+            jnp.mean(packed, axis=(0, 1)),
+            dimension=dimension,
+        )
+        self.adjusted_draws_ = adjusted
+        self.epsilon_ = epsilon
+        self.prior_scale_ = prior_scale
+        self.prior_df_ = prior_df
+        self.posterior_scale_ = posterior_scale
+        self.posterior_df_ = posterior_df
+        self.n_features_in_ = dimension
+        self.n_observations_ = n_observations
+        self.dtype_ = dtype
+        self.device_ = target
+        return self
+
+
+class ThresholdPPP(_PosteriorSummariesMixin):
+    """Post-processed posterior estimator for a sparse covariance matrix."""
+
+    covariance_: Array
+    posterior_samples_packed_: Array
+    adjusted_draws_: Array
+    epsilon_: Array
+    threshold_: Array
+    prior_scale_: Array
+    prior_df_: Array
+    posterior_scale_: Array
+    posterior_df_: Array
+    n_features_in_: int
+    n_observations_: int
+    dtype_: jnp.dtype
+    device_: jax.Device
+
+    def __init__(
+        self,
+        threshold: float | Array = 0.1,
+        *,
+        method: ThresholdMethod = "hard",
+        epsilon: float | Array = 0.0,
+        prior_scale: ArrayLike | None = None,
+        prior_df: float | Array | None = None,
+        n_samples: int = 2000,
+        n_chains: int = 1,
+        dtype: _DTypeName = "float64",
+        device: _DeviceRequest = None,
+    ) -> None:
+        _validate_nonnegative_scalar("threshold", threshold)
+        _validate_threshold_method(method)
+        _validate_optional_epsilon(epsilon)
+        _validate_configuration(n_samples, 0, n_chains, dtype, device)
+        self.threshold = threshold
+        self.method = method
+        self.epsilon = epsilon
+        self.prior_scale = prior_scale
+        self.prior_df = prior_df
+        self.n_samples = n_samples
+        self.n_chains = n_chains
+        self.dtype = dtype
+        self.device = device
+
+    @property
+    def posterior_samples_(self) -> Array:
+        """Reconstruct full covariance draws from packed fitted storage."""
+        try:
+            packed = self.posterior_samples_packed_
+            dimension = self.n_features_in_
+        except AttributeError:
+            raise AttributeError(
+                "posterior_samples_ is available only after fit"
+            ) from None
+        return unpack_lower_triangle_column_major(packed, dimension=dimension)
+
+    def fit(self, X: ArrayLike, *, key: Array) -> Self:
+        """Draw inverse-Wishart samples and apply sparse post-processing."""
+        _validate_key(key)
+        _validate_nonnegative_scalar("threshold", self.threshold)
+        _validate_threshold_method(self.method)
+        _validate_optional_epsilon(self.epsilon)
+        _validate_configuration(
+            self.n_samples, 0, self.n_chains, self.dtype, self.device
+        )
+        if self.dtype == "float64" and not _x64_enabled():
+            raise RuntimeError(
+                "dtype='float64' requires JAX X64 mode. Set JAX_ENABLE_X64=1 "
+                "before starting Python."
+            )
+        target = _resolve_device(self.device)
+        dtype = jnp.dtype(self.dtype)
+
+        with jax.default_device(target):
+            try:
+                raw_x = jnp.asarray(X)
+            except (TypeError, ValueError) as error:
+                raise TypeError("X must be a real numeric array") from error
+            if not jnp.issubdtype(raw_x.dtype, jnp.number) or jnp.issubdtype(
+                raw_x.dtype, jnp.complexfloating
+            ):
+                raise TypeError("X must be a real numeric array")
+            x = cast(Array, jax.device_put(jnp.asarray(raw_x, dtype=dtype), target))
+            n_observations, dimension = _validate_x(x)
+
+            if self.prior_scale is None:
+                prior_scale = jnp.eye(dimension, dtype=dtype)
+            else:
+                try:
+                    raw_prior_scale = jnp.asarray(self.prior_scale)
+                except (TypeError, ValueError) as error:
+                    raise TypeError(
+                        "prior_scale must be a real numeric array"
+                    ) from error
+                if (
+                    not jnp.issubdtype(raw_prior_scale.dtype, jnp.number)
+                    or jnp.issubdtype(raw_prior_scale.dtype, jnp.complexfloating)
+                    or jnp.issubdtype(raw_prior_scale.dtype, jnp.bool_)
+                ):
+                    raise TypeError("prior_scale must be a real numeric array")
+                prior_scale = jnp.asarray(raw_prior_scale, dtype=dtype)
+            _validate_bandppp_prior_scale(prior_scale, dimension)
+            prior_df = _bandppp_prior_df(
+                self.prior_df,
+                default=dimension + 1,
+                dimension=dimension,
+                dtype=dtype,
+            )
+            posterior_df = prior_df + n_observations
+            posterior_scale = x.T @ x + prior_scale
+            threshold = jnp.asarray(self.threshold, dtype=dtype)
+            epsilon = jnp.asarray(self.epsilon, dtype=dtype)
+            chain_keys = jax.random.split(jax.device_put(key, target), self.n_chains)
+            packed, adjusted = _compile_thresholdppp_chains()(
+                chain_keys,
+                posterior_scale,
+                posterior_df,
+                threshold,
+                epsilon,
+                method=self.method,
+                n_samples=self.n_samples,
+            )
+            packed.block_until_ready()
+
+        self.posterior_samples_packed_ = packed
+        self.covariance_ = unpack_lower_triangle_column_major(
+            jnp.mean(packed, axis=(0, 1)), dimension=dimension
+        )
+        self.adjusted_draws_ = adjusted
+        self.threshold_ = threshold
+        self.epsilon_ = epsilon
+        self.prior_scale_ = prior_scale
+        self.prior_df_ = prior_df
+        self.posterior_scale_ = posterior_scale
+        self.posterior_df_ = posterior_df
+        self.n_features_in_ = dimension
+        self.n_observations_ = n_observations
+        self.dtype_ = dtype
+        self.device_ = target
+        return self
+
+
 def _validate_initial_covariance(covariance: Array, dimension: int) -> None:
     if covariance.shape != (dimension, dimension):
         raise ValueError(
@@ -398,6 +752,72 @@ def _validate_initial_covariance(covariance: Array, dimension: int) -> None:
         raise ValueError("initial_covariance must be symmetric")
     if not bool(jnp.all(jnp.linalg.eigvalsh(covariance) > 0.0)):
         raise ValueError("initial_covariance must be positive definite")
+
+
+def _validate_bandppp_prior_scale(scale: Array, dimension: int) -> None:
+    if scale.shape != (dimension, dimension):
+        raise ValueError(
+            "prior_scale must have shape "
+            f"({dimension}, {dimension}); received {scale.shape}"
+        )
+    if not bool(jnp.all(jnp.isfinite(scale))):
+        raise ValueError("prior_scale must contain only finite values")
+    tolerance = 1e-5 if scale.dtype == jnp.float32 else 1e-12
+    if not bool(jnp.allclose(scale, scale.T, rtol=tolerance, atol=tolerance)):
+        raise ValueError("prior_scale must be symmetric")
+    if not bool(jnp.all(jnp.linalg.eigvalsh(scale) > 0.0)):
+        raise ValueError("prior_scale must be positive definite")
+
+
+def _validate_nonnegative_scalar(name: str, value: object) -> None:
+    try:
+        scalar = jnp.asarray(value)
+    except (TypeError, ValueError) as error:
+        raise TypeError(f"{name} must be a real scalar") from error
+    if scalar.ndim != 0:
+        raise ValueError(f"{name} must be a scalar")
+    if (
+        not jnp.issubdtype(scalar.dtype, jnp.number)
+        or jnp.issubdtype(scalar.dtype, jnp.complexfloating)
+        or jnp.issubdtype(scalar.dtype, jnp.bool_)
+    ):
+        raise TypeError(f"{name} must be a real scalar")
+    if not bool(jnp.isfinite(scalar)) or not bool(scalar >= 0.0):
+        raise ValueError(f"{name} must be finite and non-negative")
+
+
+def _validate_threshold_method(method: object) -> None:
+    if not isinstance(method, str):
+        raise TypeError("method must be 'hard' or 'soft'")
+    if method not in {"hard", "soft"}:
+        raise ValueError("method must be 'hard' or 'soft'")
+
+
+def _bandppp_prior_df(
+    value: object,
+    *,
+    default: int,
+    dimension: int,
+    dtype: jnp.dtype,
+) -> Array:
+    try:
+        raw = jnp.asarray(default if value is None else value)
+    except (TypeError, ValueError) as error:
+        raise TypeError("prior_df must be a real scalar") from error
+    if raw.ndim != 0:
+        raise ValueError("prior_df must be a scalar")
+    if (
+        not jnp.issubdtype(raw.dtype, jnp.number)
+        or jnp.issubdtype(raw.dtype, jnp.complexfloating)
+        or jnp.issubdtype(raw.dtype, jnp.bool_)
+    ):
+        raise TypeError("prior_df must be a real scalar")
+    scalar = jnp.asarray(raw, dtype=dtype)
+    if not bool(jnp.isfinite(scalar)):
+        raise ValueError("prior_df must be finite")
+    if not bool(scalar > dimension - 1):
+        raise ValueError(f"prior_df must be greater than p - 1 ({dimension - 1})")
+    return scalar
 
 
 class BMSPCov(_PosteriorSummariesMixin):
@@ -593,9 +1013,9 @@ class SBMSPCov(_PosteriorSummariesMixin):
     columns are variables, and the sampler uses X.T @ X without silently
     centering the data. Center data before calling fit when the mean is unknown.
 
-    Screening runs once per fit, and every Python chain shares the resulting
-    fixed support. This differs intentionally from bspcov 1.0.3, whose FNR path
-    consumes fresh screening RNG separately for each chain.
+    By default, screening runs once per fit and all chains share the support.
+    Set ``screening_scope="chain"`` to draw and apply an independent FNR
+    screening cutoff for each chain, matching bspcov 1.0.3 semantics.
     """
 
     covariance_: Array
@@ -617,6 +1037,7 @@ class SBMSPCov(_PosteriorSummariesMixin):
         burnin: int = 1000,
         n_chains: int = 1,
         cutoff_method: _CutoffMethod = "fnr",
+        screening_scope: _ScreeningScope = "fit",
         fnr_correlation: float | Array = 0.25,
         false_negative_rate: float | Array = 0.05,
         n_cutoff_simulations: int = 1000,
@@ -629,6 +1050,7 @@ class SBMSPCov(_PosteriorSummariesMixin):
             burnin,
             n_chains,
             cutoff_method,
+            screening_scope,
             fnr_correlation,
             false_negative_rate,
             n_cutoff_simulations,
@@ -640,6 +1062,7 @@ class SBMSPCov(_PosteriorSummariesMixin):
         self.burnin = burnin
         self.n_chains = n_chains
         self.cutoff_method = cutoff_method
+        self.screening_scope = screening_scope
         self.fnr_correlation = fnr_correlation
         self.false_negative_rate = false_negative_rate
         self.n_cutoff_simulations = n_cutoff_simulations
@@ -676,13 +1099,14 @@ class SBMSPCov(_PosteriorSummariesMixin):
         key: Array,
         initial_covariance: ArrayLike | None = None,
     ) -> Self:
-        """Screen once, then fit independent SBM chains on the shared support."""
+        """Screen and fit independent SBM chains on the requested support scope."""
         _validate_key(key)
         _validate_sbm_configuration(
             self.n_samples,
             self.burnin,
             self.n_chains,
             self.cutoff_method,
+            self.screening_scope,
             self.fnr_correlation,
             self.false_negative_rate,
             self.n_cutoff_simulations,
@@ -738,65 +1162,136 @@ class SBMSPCov(_PosteriorSummariesMixin):
 
             master_key = cast(Array, jax.device_put(key, target))
             screening_key, sampler_key = jax.random.split(master_key)
+            if self.screening_scope == "fit":
+                screening_keys = (screening_key,)
+            else:
+                screening_keys = tuple(jax.random.split(screening_key, self.n_chains))
+
             screening_cutoff: Array | None
             if cutoff_method == "fnr":
                 scores = pairwise_jeffreys_bayes_factors(x)
-                screening_cutoff = estimate_fnr_cutoff(
-                    screening_key,
-                    n_observations=n_observations,
-                    correlation=self.fnr_correlation,
-                    false_negative_rate=self.false_negative_rate,
-                    n_simulations=self.n_cutoff_simulations,
-                    dtype=self.dtype,
+                cutoffs = tuple(
+                    estimate_fnr_cutoff(
+                        chain_screening_key,
+                        n_observations=n_observations,
+                        correlation=self.fnr_correlation,
+                        false_negative_rate=self.false_negative_rate,
+                        n_simulations=self.n_cutoff_simulations,
+                        dtype=self.dtype,
+                    )
+                    for chain_screening_key in screening_keys
                 )
-                active_mask = fnr_screening_mask(scores, screening_cutoff)
+                active_masks = tuple(
+                    fnr_screening_mask(scores, cutoff) for cutoff in cutoffs
+                )
+                screening_cutoff = (
+                    cutoffs[0] if self.screening_scope == "fit" else jnp.stack(cutoffs)
+                )
             else:
                 screening_cutoff = None
-                active_mask = correlation_screening_mask(
+                shared_mask = correlation_screening_mask(
                     x,
                     retained_fraction=self.retained_fraction,
                 )
-            active_mask = cast(
-                Array,
-                jax.device_put(
-                    validate_sbm_active_mask(active_mask, dimension=dimension),
-                    target,
-                ),
+                active_masks = (
+                    (shared_mask,)
+                    if self.screening_scope == "fit"
+                    else (shared_mask,) * self.n_chains
+                )
+
+            active_masks = tuple(
+                cast(
+                    Array,
+                    jax.device_put(
+                        validate_sbm_active_mask(mask, dimension=dimension),
+                        target,
+                    ),
+                )
+                for mask in active_masks
+            )
+            screening_mask = (
+                active_masks[0]
+                if self.screening_scope == "fit"
+                else jnp.stack(active_masks)
             )
 
             other_indices = _other_indices(dimension, target)
-            structure = prepare_sbm_compact_structure(active_mask, other_indices)
             tau1sq = jnp.log(jnp.asarray(dimension, dtype=dtype)) / jnp.asarray(
                 dimension**2 * n_observations,
                 dtype=dtype,
             )
-            initial_state = initialize_sbm_state(covariance, tau1sq, active_mask)
-            supported = active_mask | jnp.eye(dimension, dtype=jnp.bool_)
-            screened_without_jitter = jnp.where(supported, covariance, 0.0)
-            screening_jitter = float(
-                initial_state.covariance[0, 0] - screened_without_jitter[0, 0]
+            initial_states = tuple(
+                initialize_sbm_state(covariance, tau1sq, mask) for mask in active_masks
             )
-            states = jax.tree.map(
-                lambda value: jnp.broadcast_to(
-                    value,
-                    (self.n_chains, *value.shape),
-                ),
-                initial_state,
+            structures = tuple(
+                prepare_sbm_compact_structure(mask, other_indices)
+                for mask in active_masks
+            )
+            screening_jitters = tuple(
+                float(
+                    state.covariance[0, 0]
+                    - jnp.where(
+                        mask | jnp.eye(dimension, dtype=jnp.bool_),
+                        covariance,
+                        0.0,
+                    )[0, 0]
+                )
+                for state, mask in zip(initial_states, active_masks, strict=True)
             )
             chain_keys = jax.random.split(sampler_key, self.n_chains)
-            result = _compile_sbm_chains()(
-                chain_keys,
-                states,
-                scatter,
-                jnp.asarray(n_observations, dtype=jnp.int32),
-                jnp.asarray(0.5, dtype=dtype),
-                jnp.asarray(0.5, dtype=dtype),
-                jnp.asarray(1.0, dtype=dtype),
-                tau1sq,
-                structure,
-                burnin=self.burnin,
-                n_samples=self.n_samples,
-            )
+            if self.screening_scope == "fit":
+                states = jax.tree.map(
+                    lambda value: jnp.broadcast_to(
+                        value,
+                        (self.n_chains, *value.shape),
+                    ),
+                    initial_states[0],
+                )
+                result = _compile_sbm_chains()(
+                    chain_keys,
+                    states,
+                    scatter,
+                    jnp.asarray(n_observations, dtype=jnp.int32),
+                    jnp.asarray(0.5, dtype=dtype),
+                    jnp.asarray(0.5, dtype=dtype),
+                    jnp.asarray(1.0, dtype=dtype),
+                    tau1sq,
+                    structures[0],
+                    burnin=self.burnin,
+                    n_samples=self.n_samples,
+                )
+                fitted_initial_covariance = initial_states[0].covariance
+            else:
+                chain_results = []
+                for chain_index, (state, structure) in enumerate(
+                    zip(initial_states, structures, strict=True)
+                ):
+                    batched_state = jax.tree.map(
+                        lambda value: value[jnp.newaxis, ...],
+                        state,
+                    )
+                    chain_results.append(
+                        _compile_sbm_chains()(
+                            chain_keys[chain_index : chain_index + 1],
+                            batched_state,
+                            scatter,
+                            jnp.asarray(n_observations, dtype=jnp.int32),
+                            jnp.asarray(0.5, dtype=dtype),
+                            jnp.asarray(0.5, dtype=dtype),
+                            jnp.asarray(1.0, dtype=dtype),
+                            tau1sq,
+                            structure,
+                            burnin=self.burnin,
+                            n_samples=self.n_samples,
+                        )
+                    )
+                result = jax.tree.map(
+                    lambda *values: jnp.concatenate(values, axis=0),
+                    *chain_results,
+                )
+                fitted_initial_covariance = jnp.stack(
+                    [state.covariance for state in initial_states]
+                )
             result.covariance.block_until_ready()
 
         rejected = int(jnp.count_nonzero(~result.accepted))
@@ -815,17 +1310,30 @@ class SBMSPCov(_PosteriorSummariesMixin):
             posterior_mean_packed,
             dimension=dimension,
         )
-        active_edges = int(jnp.count_nonzero(jnp.tril(active_mask, k=-1)))
+        active_edge_counts = tuple(
+            int(jnp.count_nonzero(jnp.tril(mask, k=-1))) for mask in active_masks
+        )
         total_edges = dimension * (dimension - 1) // 2
+        screened_edge_counts = tuple(
+            total_edges - count for count in active_edge_counts
+        )
+        if self.screening_scope == "fit":
+            diagnostic_jitter: float | tuple[float, ...] = screening_jitters[0]
+            diagnostic_active_edges: int | tuple[int, ...] = active_edge_counts[0]
+            diagnostic_screened_edges: int | tuple[int, ...] = screened_edge_counts[0]
+        else:
+            diagnostic_jitter = screening_jitters
+            diagnostic_active_edges = active_edge_counts
+            diagnostic_screened_edges = screened_edge_counts
         diagnostics = SBMDiagnostics(
             accepted=result.accepted,
             n_sweeps=self.n_chains * (self.burnin + self.n_samples),
             n_rejected_sweeps=0,
             n_initial_repairs=n_initial_repairs,
             initial_variance_floor=initial_variance_floor,
-            screening_jitter=screening_jitter,
-            n_active_edges=active_edges,
-            n_screened_edges=total_edges - active_edges,
+            screening_jitter=diagnostic_jitter,
+            n_active_edges=diagnostic_active_edges,
+            n_screened_edges=diagnostic_screened_edges,
             cutoff_method=cutoff_method,
             dtype=str(dtype),
             device=f"{target.platform}:{target.id}",
@@ -835,8 +1343,8 @@ class SBMSPCov(_PosteriorSummariesMixin):
         self.phi_samples_packed_ = result.phi
         self.covariance_ = covariance_mean
         self.diagnostics_ = diagnostics
-        self.initial_covariance_ = initial_state.covariance
-        self.screening_mask_ = active_mask
+        self.initial_covariance_ = fitted_initial_covariance
+        self.screening_mask_ = screening_mask
         self.screening_cutoff_ = screening_cutoff
         self.n_features_in_ = dimension
         self.n_observations_ = n_observations
