@@ -80,9 +80,7 @@ def test_thresholdppp_is_reproducible_for_one_key() -> None:
         "n_chains": 2,
         "dtype": "float32",
     }
-    first = ThresholdPPP(**configuration).fit(
-        _centered_case(), key=jax.random.key(227)
-    )
+    first = ThresholdPPP(**configuration).fit(_centered_case(), key=jax.random.key(227))
     second = ThresholdPPP(**configuration).fit(
         _centered_case(), key=jax.random.key(227)
     )
