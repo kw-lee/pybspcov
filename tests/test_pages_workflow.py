@@ -44,6 +44,7 @@ def test_pages_workflow_builds_and_deploys_current_docs() -> None:
     assert isinstance(jobs, dict)
     build = jobs["build"]
     assert isinstance(build, dict)
+    assert "if" not in build
     assert build["permissions"] == {"contents": "read", "pages": "read"}
     build_steps = build["steps"]
     assert isinstance(build_steps, list)
@@ -70,6 +71,7 @@ def test_pages_workflow_builds_and_deploys_current_docs() -> None:
 
     deploy = jobs["deploy"]
     assert isinstance(deploy, dict)
+    assert deploy["if"] == "github.ref == 'refs/heads/main'"
     assert deploy["needs"] == "build"
     assert deploy["permissions"] == {"pages": "write", "id-token": "write"}
     assert deploy["environment"] == {

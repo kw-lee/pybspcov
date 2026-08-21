@@ -10,9 +10,7 @@ from typing import Literal, Protocol, TypedDict
 RefKind = Literal["branch", "tag"]
 
 _FEATURE_BRANCH = re.compile(r"feat/.+")
-_RELEASE_TAG = re.compile(
-    r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?"
-)
+_RELEASE_TAG = re.compile(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?")
 
 
 class RefLike(Protocol):

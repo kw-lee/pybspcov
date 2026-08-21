@@ -40,12 +40,8 @@ def test_threshold_cross_validation_is_reproducible_and_sorted() -> None:
         "n_folds": 5,
         "dtype": "float32",
     }
-    first = cross_validate_threshold_ppp(
-        _case(), key=jax.random.key(307), **arguments
-    )
-    second = cross_validate_threshold_ppp(
-        _case(), key=jax.random.key(307), **arguments
-    )
+    first = cross_validate_threshold_ppp(_case(), key=jax.random.key(307), **arguments)
+    second = cross_validate_threshold_ppp(_case(), key=jax.random.key(307), **arguments)
 
     assert isinstance(first, ThresholdCVResult)
     assert first.columns == ("threshold", "epsilon", "spectral_norm_error")

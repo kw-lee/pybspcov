@@ -12,7 +12,6 @@ class StubRef:
     remote: str | None = None
 
 
-
 @pytest.mark.parametrize(
     ("ref", "expected"),
     [
