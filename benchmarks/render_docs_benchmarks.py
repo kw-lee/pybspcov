@@ -1,0 +1,181 @@
+"""Render a compact Sphinx table from versioned benchmark JSONL records."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+
+EXPECTED_CELLS = {
+    (estimator, device, dtype)
+    for estimator in ("bm", "sbm")
+    for device in ("cpu", "gpu")
+    for dtype in ("float32", "float64")
+}
+
+
+def load_records(directory: Path) -> list[dict[str, object]]:
+    """Load every JSON object from the cached JSONL files in ``directory``."""
+    records: list[dict[str, object]] = []
+    for path in sorted(directory.glob("*.jsonl")):
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if not line.strip():
+                continue
+            parsed = json.loads(line)
+            if not isinstance(parsed, dict):
+                raise TypeError(f"{path}:{line_number} must contain a JSON object")
+            records.append(parsed)
+    if not records:
+        raise ValueError(f"no cached JSONL records found in {directory}")
+    return records
+
+
+def render_summary(records: Sequence[Mapping[str, object]], *, baseline: str) -> str:
+    """Validate and render the complete p=200 CPU/GPU comparison."""
+    selected: dict[tuple[str, str, str], Mapping[str, object]] = {}
+    for record in records:
+        if int(record.get("dimension", -1)) != 200:
+            continue
+        cell = (
+            str(record.get("estimator")),
+            str(record.get("device")),
+            str(record.get("dtype")),
+        )
+        if cell not in EXPECTED_CELLS:
+            raise ValueError(f"unexpected p=200 benchmark cell: {cell}")
+        if cell in selected:
+            raise ValueError(f"duplicate p=200 benchmark cell: {cell}")
+        selected[cell] = record
+
+    missing = EXPECTED_CELLS - selected.keys()
+    if missing:
+        raise ValueError(f"missing p=200 benchmark cells: {sorted(missing)}")
+
+    reference = selected[("bm", "cpu", "float32")]
+    git = reference.get("git")
+    environment = reference.get("environment")
+    if not isinstance(git, Mapping) or git.get("dirty") is not False:
+        raise ValueError("cached benchmark records require a clean git revision")
+    if not isinstance(environment, Mapping):
+        raise TypeError("cached benchmark environment must be an object")
+    revision = str(git.get("revision"))
+    python_version = str(environment.get("python"))
+    jax_version = str(environment.get("jax"))
+    jaxlib_version = str(environment.get("jaxlib"))
+    workload_fields = (
+        "n_observations",
+        "density",
+        "burnin",
+        "samples",
+        "chain_count",
+        "repetitions",
+    )
+    expected_workload = tuple(reference.get(field) for field in workload_fields)
+
+    medians: dict[tuple[str, str, str], float] = {}
+    for cell, record in selected.items():
+        if record.get("schema_version") != "2.0":
+            raise ValueError("cached benchmark records must use schema 2.0")
+        record_git = record.get("git")
+        record_environment = record.get("environment")
+        if not isinstance(record_git, Mapping) or record_git.get("dirty") is not False:
+            raise ValueError("cached benchmark records require a clean git revision")
+        if record_git.get("revision") != revision:
+            raise ValueError("cached benchmark revisions do not match")
+        if not isinstance(record_environment, Mapping):
+            raise TypeError("cached benchmark environment must be an object")
+        if (
+            record_environment.get("python"),
+            record_environment.get("jax"),
+            record_environment.get("jaxlib"),
+        ) != (python_version, jax_version, jaxlib_version):
+            raise ValueError("cached benchmark runtime versions do not match")
+        if tuple(record.get(field) for field in workload_fields) != expected_workload:
+            raise ValueError("cached benchmark workloads do not match")
+        timing_summary = record.get("timing_summary")
+        if not isinstance(timing_summary, Mapping):
+            raise TypeError("cached benchmark timing_summary must be an object")
+        median = float(timing_summary.get("median", math.nan))
+        if not math.isfinite(median) or median <= 0.0:
+            raise ValueError("cached benchmark medians must be finite and positive")
+        medians[cell] = median
+
+    n_observations, density, burnin, samples, chain_count, repetitions = (
+        expected_workload
+    )
+    workload = (
+        f"Workload: p=200, n={n_observations}, density {density}, "
+        f"{burnin} burn-in sweep, {samples} retained samples, "
+        f"{chain_count} chain, and {repetitions} repetitions. "
+        f"Runtime: Python {python_version}, JAX/JAXLIB {jax_version}."
+    )
+    report_url = (
+        "https://github.com/kw-lee/pybspcov/blob/main/benchmarks/"
+        f"baselines/{baseline}/README.md"
+    )
+    lines = [
+        "<!-- Generated by benchmarks/render_docs_benchmarks.py; do not edit. -->",
+        "",
+        "## Cached p=200 result",
+        "",
+        (
+            f"Cached baseline `{baseline}` was measured at revision `{revision}`. "
+            "The table reports warmed median fit time in seconds; compilation "
+            "is excluded. A speedup above 1.0 means the GPU was faster."
+        ),
+        "",
+        "| Estimator | Dtype | CPU (s) | GPU (s) | GPU speedup |",
+        "| --- | --- | ---: | ---: | ---: |",
+    ]
+    for estimator, label in (("bm", "BM"), ("sbm", "SBM")):
+        for dtype in ("float32", "float64"):
+            cpu = medians[(estimator, "cpu", dtype)]
+            gpu = medians[(estimator, "gpu", dtype)]
+            lines.append(
+                f"| {label} | {dtype} | {cpu:.3f} | {gpu:.3f} | {cpu / gpu:.3f}x |"
+            )
+    lines.extend(
+        [
+            "",
+            workload,
+            "",
+            f"[Full cached report and methodology]({report_url})",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def sync_output(path: Path, rendered: str, *, check: bool) -> None:
+    """Write ``rendered`` or fail when a checked output is stale."""
+    current = path.read_text(encoding="utf-8") if path.is_file() else None
+    if current == rendered:
+        return
+    if check:
+        raise RuntimeError(
+            f"{path} is out of date; run benchmarks/render_docs_benchmarks.py"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(rendered, encoding="utf-8")
+
+
+if __name__ == "__main__":
+    project_root = Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--baseline", default="0.1.0.dev1")
+    parser.add_argument("--input-dir", type=Path)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--check", action="store_true")
+    arguments = parser.parse_args()
+    input_dir = arguments.input_dir or (
+        project_root / "benchmarks" / "baselines" / arguments.baseline
+    )
+    output = arguments.output or (
+        project_root / "docs" / "source" / "_generated" / "benchmark-summary.md"
+    )
+    summary = render_summary(load_records(input_dir), baseline=arguments.baseline)
+    sync_output(output, summary, check=arguments.check)

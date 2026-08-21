@@ -827,6 +827,22 @@ class BMSPCov(_PosteriorSummariesMixin):
     observations, columns are variables, and the sampler uses ``X.T @ X``
     without silently centering the data. Center data before calling
     :meth:`fit` when the mean is unknown.
+
+    Examples:
+        Fit a short float32 chain on the CPU and inspect the stable output
+        shape. Longer runs are required for inference.
+
+        >>> import jax
+        >>> import jax.numpy as jnp
+        >>> X = jnp.concatenate((jnp.eye(3), -jnp.eye(3))).astype(jnp.float32)
+        >>> model = BMSPCov(
+        ...     n_samples=2, burnin=1, dtype="float32", device="cpu"
+        ... ).fit(X, key=jax.random.key(17))
+        >>> model.estimate().shape
+        (3, 3)
+
+        See the :doc:`cached benchmark summary <benchmarks>` for measured
+        CPU and GPU results; Sphinx does not rerun those measurements.
     """
 
     covariance_: Array
@@ -1016,6 +1032,27 @@ class SBMSPCov(_PosteriorSummariesMixin):
     By default, screening runs once per fit and all chains share the support.
     Set ``screening_scope="chain"`` to draw and apply an independent FNR
     screening cutoff for each chain, matching bspcov 1.0.3 semantics.
+
+    Examples:
+        Correlation screening avoids the stochastic FNR cutoff calculation in
+        this short output-shape example.
+
+        >>> import jax
+        >>> import jax.numpy as jnp
+        >>> X = jnp.concatenate((jnp.eye(3), -jnp.eye(3))).astype(jnp.float32)
+        >>> model = SBMSPCov(
+        ...     n_samples=2,
+        ...     burnin=1,
+        ...     cutoff_method="correlation",
+        ...     retained_fraction=0.5,
+        ...     dtype="float32",
+        ...     device="cpu",
+        ... ).fit(X, key=jax.random.key(101))
+        >>> model.estimate().shape
+        (3, 3)
+
+        See the :doc:`cached benchmark summary <benchmarks>` for measured
+        CPU and GPU results; Sphinx does not rerun those measurements.
     """
 
     covariance_: Array
