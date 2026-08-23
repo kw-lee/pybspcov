@@ -500,6 +500,19 @@ def test_python_runner_executes_real_thresholdppp_smoke_cell() -> None:
     assert result["rejected_sweeps"] == 0
 
 
+
+def test_python_runner_normalizes_jax_nvidia_gpu_platform_to_cuda() -> None:
+    runner = _module(PYTHON_RUNNER_PATH, "r_comparison_python_runner_platform")
+
+    class Device:
+        def __init__(self, platform: str, device_kind: str) -> None:
+            self.platform = platform
+            self.device_kind = device_kind
+
+    assert runner._actual_platform(Device("gpu", "NVIDIA GeForce RTX 3090")) == "cuda"
+    assert runner._actual_platform(Device("cpu", "cpu")) == "cpu"
+    assert runner._actual_platform(Device("gpu", "AMD Radeon")) == "gpu"
+
 def test_matrix_contains_only_the_pre_registered_sixty_cells() -> None:
     matrix = _module(MATRIX_PATH, "r_comparison_matrix")
     manifest = _core().load_manifest(MANIFEST_PATH)

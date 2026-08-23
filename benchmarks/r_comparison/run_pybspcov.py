@@ -22,6 +22,14 @@ from fixtures import fixture_sha256, load_fixture
 from pybspcov import BandPPP, BMSPCov, SBMSPCov, ThresholdPPP, __version__
 
 
+def _actual_platform(device: Any) -> str:
+    """Normalize JAX's generic GPU label to an explicit CUDA provenance value."""
+    platform = str(device.platform)
+    if platform == "gpu" and "nvidia" in str(device.device_kind).lower():
+        return "cuda"
+    return platform
+
+
 def build_estimator(
     method: str,
     *,
@@ -164,7 +172,7 @@ def measure_cell(
         np.linalg.norm(estimate - truth) / np.linalg.norm(truth)
     )
     return {
-        "actual_platform": latest.device_.platform,
+        "actual_platform": _actual_platform(latest.device_),
         "retained_draws": retained_draws,
         "cold_fit_seconds": cold_fit_seconds,
         "warm_seconds": warm_seconds,
