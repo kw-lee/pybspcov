@@ -42,9 +42,7 @@ def load_manifest(path: Path) -> dict[str, Any]:
     timing = parsed.get("timing")
     if not isinstance(timing, dict):
         raise TypeError("benchmark timing policy must be an object")
-    if timing.get("warm_repetitions") != 3 or timing.get(
-        "noisy_warm_repetitions"
-    ) != 5:
+    if timing.get("warm_repetitions") != 3 or timing.get("noisy_warm_repetitions") != 5:
         raise ValueError("benchmark timing policy must use adaptive 3-to-5 repeats")
     return parsed
 

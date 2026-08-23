@@ -138,9 +138,7 @@ def measure_cell(
     keys = iter(jax.random.split(jax.random.key(seed), 6))
     cold_estimator = new_estimator()
     start = time.perf_counter()
-    cold_estimator = _fit(
-        cold_estimator, observations, next(keys), initial_covariance
-    )
+    cold_estimator = _fit(cold_estimator, observations, next(keys), initial_covariance)
     cold_fit_seconds = time.perf_counter() - start
 
     warm_seconds: list[float] = []
@@ -194,13 +192,19 @@ def main() -> None:
     script_directory = Path(__file__).resolve().parent
     project_root = script_directory.parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", type=Path, default=script_directory / "manifest.json")
+    parser.add_argument(
+        "--manifest", type=Path, default=script_directory / "manifest.json"
+    )
     parser.add_argument("--fixture-dir", type=Path, required=True)
-    parser.add_argument("--method", choices=("bm", "sbm", "bandppp", "thresholdppp"), required=True)
+    parser.add_argument(
+        "--method", choices=("bm", "sbm", "bandppp", "thresholdppp"), required=True
+    )
     parser.add_argument("--dtype", choices=("float32", "float64"), required=True)
     parser.add_argument("--device", choices=("cpu", "gpu"), required=True)
     parser.add_argument("--parallelism", type=int, required=True)
-    parser.add_argument("--configuration", choices=("optimized", "cpu_baseline"), required=True)
+    parser.add_argument(
+        "--configuration", choices=("optimized", "cpu_baseline"), required=True
+    )
     parser.add_argument("--cpu-cores", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()
@@ -246,7 +250,9 @@ def main() -> None:
     }
     validate_timing_record(record)
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
-    arguments.output.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
+    arguments.output.write_text(
+        json.dumps(record, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 if __name__ == "__main__":

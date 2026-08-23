@@ -17,6 +17,9 @@ FIXTURES_PATH = BENCHMARK_DIR / "fixtures.py"
 PYTHON_RUNNER_PATH = BENCHMARK_DIR / "run_pybspcov.py"
 MATRIX_PATH = BENCHMARK_DIR / "run_matrix.py"
 R_RUNNER_PATH = BENCHMARK_DIR / "run_bspcov.R"
+PARITY_RUNNER_PATH = BENCHMARK_DIR / "run_pybspcov_parity.py"
+R_PARITY_RUNNER_PATH = BENCHMARK_DIR / "run_bspcov_parity.R"
+PARITY_COMPARE_PATH = BENCHMARK_DIR / "compare_parity.py"
 
 sys.path.insert(0, str(BENCHMARK_DIR))
 
@@ -199,24 +202,33 @@ def test_timing_summary_rejects_non_protocol_repeat_counts(times: list[float]) -
 def test_headline_dtype_requires_parity_and_five_percent_speedup() -> None:
     core = _core()
 
-    assert core.select_headline_dtype(
-        float64_seconds=10.0,
-        float32_seconds=9.5,
-        float64_parity=True,
-        float32_parity=True,
-    ) == "float32"
-    assert core.select_headline_dtype(
-        float64_seconds=10.0,
-        float32_seconds=9.51,
-        float64_parity=True,
-        float32_parity=True,
-    ) == "float64"
-    assert core.select_headline_dtype(
-        float64_seconds=10.0,
-        float32_seconds=8.0,
-        float64_parity=True,
-        float32_parity=False,
-    ) == "float64"
+    assert (
+        core.select_headline_dtype(
+            float64_seconds=10.0,
+            float32_seconds=9.5,
+            float64_parity=True,
+            float32_parity=True,
+        )
+        == "float32"
+    )
+    assert (
+        core.select_headline_dtype(
+            float64_seconds=10.0,
+            float32_seconds=9.51,
+            float64_parity=True,
+            float32_parity=True,
+        )
+        == "float64"
+    )
+    assert (
+        core.select_headline_dtype(
+            float64_seconds=10.0,
+            float32_seconds=8.0,
+            float64_parity=True,
+            float32_parity=False,
+        )
+        == "float64"
+    )
 
 
 def test_headline_dtype_rejects_failed_float64_parity() -> None:
@@ -342,6 +354,26 @@ def test_written_fixture_round_trips_with_a_content_hash(tmp_path: Path) -> None
         np.testing.assert_allclose(loaded[key], fixture[key], rtol=0.0, atol=1e-15)
 
 
+def test_generated_matrix_fixtures_include_committed_p5_parity_case(
+    tmp_path: Path,
+) -> None:
+    matrix = _module(MATRIX_PATH, "r_comparison_matrix_parity_fixture")
+    fixtures = _module(FIXTURES_PATH, "r_comparison_parity_fixture")
+    manifest = _core().load_manifest(MANIFEST_PATH)
+
+    matrix.generate_all_fixtures(manifest, tmp_path)
+    parity = fixtures.load_fixture(tmp_path / "parity-p5")
+
+    assert parity["observations"].shape == (20, 5)
+    np.testing.assert_array_equal(
+        parity["truth_covariance"],
+        np.loadtxt(
+            PROJECT_ROOT / "benchmarks/r_example/data/bm_example_truth.csv",
+            delimiter=",",
+        ),
+    )
+
+
 @pytest.mark.parametrize(
     ("method", "expected_class", "expected_attributes"),
     [
@@ -457,6 +489,50 @@ def test_matrix_contains_only_the_pre_registered_sixty_cells() -> None:
     )
 
 
+def test_matrix_uses_available_affinity_and_enables_python_x64(tmp_path: Path) -> None:
+    matrix = _module(MATRIX_PATH, "r_comparison_matrix_affinity")
+    manifest = _core().load_manifest(MANIFEST_PATH)
+    cell = next(
+        cell
+        for cell in matrix.build_cells(manifest)
+        if cell.implementation == "pybspcov"
+        and cell.configuration == "optimized"
+        and cell.dtype == "float64"
+    )
+
+    command = matrix.command_for_cell(
+        cell,
+        script_directory=BENCHMARK_DIR,
+        manifest_path=MANIFEST_PATH,
+        fixture_root=tmp_path / "fixtures",
+        output_directory=tmp_path / "output",
+        available_cpu_ids=(4, 6, 8, 10, 12, 14, 16, 18),
+    )
+    environment = matrix.benchmark_environment({"JAX_ENABLE_X64": "0"})
+
+    assert command[:3] == ["taskset", "-c", "4,6,8,10,12,14,16,18"]
+    assert environment["JAX_ENABLE_X64"] == "1"
+    assert environment["OPENBLAS_NUM_THREADS"] == "1"
+
+
+def test_matrix_replaces_runner_cold_time_with_external_process_time(
+    tmp_path: Path,
+) -> None:
+    matrix = _module(MATRIX_PATH, "r_comparison_matrix_cold")
+    output = tmp_path / "cell.jsonl"
+    output.write_text(
+        json.dumps({"cold_end_to_end_seconds": 1.0, "other": "preserved"}) + "\n",
+        encoding="utf-8",
+    )
+
+    matrix.record_external_cold_time(output, 2.5)
+
+    assert json.loads(output.read_text(encoding="utf-8")) == {
+        "cold_end_to_end_seconds": 2.5,
+        "other": "preserved",
+    }
+
+
 def test_r_runner_help_exposes_all_four_methods_without_loading_bspcov() -> None:
     if shutil.which("Rscript") is None:
         pytest.skip("Rscript is unavailable")
@@ -472,3 +548,138 @@ def test_r_runner_help_exposes_all_four_methods_without_loading_bspcov() -> None
     assert result.returncode == 0
     assert "bm|sbm|bandppp|thresholdppp" in result.stdout
     assert "bspcov 1.0.3" in result.stdout
+
+
+def test_r_parity_runner_help_does_not_load_bspcov() -> None:
+    if shutil.which("Rscript") is None:
+        pytest.skip("Rscript is unavailable")
+    assert R_PARITY_RUNNER_PATH.is_file()
+
+    result = subprocess.run(
+        ["Rscript", "--vanilla", str(R_PARITY_RUNNER_PATH), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "bm|sbm|bandppp|thresholdppp" in result.stdout
+    assert "bspcov 1.0.3" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("method", "expected"),
+    [
+        ("bm", {"burnin": 2000, "n_samples": 2000, "n_chains": 4}),
+        (
+            "sbm",
+            {
+                "burnin": 2000,
+                "n_samples": 2000,
+                "n_chains": 4,
+                "cutoff_method": "correlation",
+                "screening_scope": "chain",
+            },
+        ),
+        (
+            "bandppp",
+            {
+                "bandwidth": 1,
+                "epsilon": 0.05,
+                "n_samples": 5000,
+                "n_chains": 1,
+            },
+        ),
+        (
+            "thresholdppp",
+            {
+                "threshold": 0.1,
+                "method": "hard",
+                "epsilon": 0.1,
+                "n_samples": 5000,
+                "n_chains": 1,
+            },
+        ),
+    ],
+)
+def test_parity_runner_uses_long_pre_registered_configuration(
+    method: str, expected: dict[str, object]
+) -> None:
+    runner = _module(PARITY_RUNNER_PATH, "r_comparison_parity_runner")
+    manifest = _core().load_manifest(MANIFEST_PATH)
+
+    estimator = runner.build_parity_estimator(
+        method, dtype="float64", device="cpu", manifest=manifest
+    )
+
+    for attribute, value in expected.items():
+        assert getattr(estimator, attribute) == value
+
+
+def _scalar_summary(mean: float, *, mcse: float = 0.01) -> dict[str, object]:
+    return {
+        "truth": [[1.0]],
+        "posterior_mean": [[mean]],
+        "posterior_mean_mcse": [[mcse]],
+        "posterior_sd": [[0.2]],
+        "posterior_sd_mcse": [[mcse]],
+        "q025": [[0.7]],
+        "q025_mcse": [[mcse]],
+        "q50": [[1.0]],
+        "q50_mcse": [[mcse]],
+        "q975": [[1.3]],
+        "q975_mcse": [[mcse]],
+        "rmse": 0.0,
+        "rmse_mcse": mcse,
+    }
+
+
+def test_parity_artifacts_require_matching_fixture_and_preserve_detailed_verdicts() -> (
+    None
+):
+    comparison = _module(PARITY_COMPARE_PATH, "r_comparison_parity_compare")
+    r_artifact = {
+        "method": "bm",
+        "implementation": "bspcov",
+        "version": "1.0.3",
+        "dtype": "float64",
+        "fixture_sha256": "a" * 64,
+        "git_revision": "c" * 40,
+        "git_dirty": False,
+        "summary": _scalar_summary(1.0),
+    }
+    python64 = {
+        "method": "bm",
+        "implementation": "pybspcov",
+        "version": "0.1.0.dev0",
+        "dtype": "float64",
+        "fixture_sha256": "a" * 64,
+        "git_revision": "c" * 40,
+        "git_dirty": False,
+        "summary": _scalar_summary(1.01),
+    }
+    python32 = {
+        **python64,
+        "dtype": "float32",
+        "summary": _scalar_summary(1.2),
+    }
+
+    result = comparison.compare_method_artifacts(r_artifact, [python64, python32])
+
+    assert result["float64"]["verdict"] == "pass"
+    assert result["float32"]["verdict"] == "fail"
+    assert (
+        result["float32"]["comparison"]["statistics"]["posterior_mean"][0][0][
+            "within_tolerance"
+        ]
+        is False
+    )
+
+    python32["fixture_sha256"] = "b" * 64
+    with pytest.raises(ValueError, match="fixture"):
+        comparison.compare_method_artifacts(r_artifact, [python64, python32])
+
+    python32["fixture_sha256"] = "a" * 64
+    python32["git_revision"] = "d" * 40
+    with pytest.raises(ValueError, match="revision"):
+        comparison.compare_method_artifacts(r_artifact, [python64, python32])

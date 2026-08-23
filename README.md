@@ -19,6 +19,24 @@ prior; and `SBMSPCov`, based on the screened beta-mixture shrinkage prior.
 The implementation uses JAX and XLA for CPU and NVIDIA GPU execution. The
 package itself does not contain custom C, C++, or CUDA extensions.
 
+## R/Python performance comparison
+
+The repository includes a reproducible, fail-closed comparison harness for R
+`bspcov` 1.0.3 and `pybspcov`. It covers BM, SBM, BandPPP, and ThresholdPPP at
+`p = 50, 100, 200`, with a Python GPU/R CPU optimized comparison and a
+single-core float64 CPU control. Timing results can be rendered here only after
+all four long-run float64 statistical-parity gates and all 60 timing cells pass.
+See the [full protocol and reproduction commands](benchmarks/r_comparison/README.md).
+
+<!-- r-python-benchmark:start -->
+### R `bspcov` comparison
+
+A complete four-method result has not been published yet. The renderer rejects
+partial matrices, dirty worktrees, version mismatches, GPU-to-CPU fallback, and
+failed float64 parity instead of publishing provisional speedups.
+
+<!-- r-python-benchmark:end -->
+
 ## Quickstart
 
 Run the BM and SBM estimators on a small centered data matrix:
