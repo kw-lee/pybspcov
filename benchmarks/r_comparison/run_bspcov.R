@@ -2,6 +2,11 @@
 
 process_start <- proc.time()[["elapsed"]]
 expected_bspcov_version <- "1.0.3"
+file_argument <- grep(
+  "^--file=", commandArgs(trailingOnly = FALSE), value = TRUE
+)[[1L]]
+script_directory <- dirname(normalizePath(sub("^--file=", "", file_argument)))
+source(file.path(script_directory, "fixture_hash.R"))
 
 usage <- function() {
   paste(
@@ -84,25 +89,8 @@ initial <- read_matrix("initial_covariance.csv")
 metadata <- jsonlite::fromJSON(file.path(fixture_directory, "metadata.json"))
 p <- ncol(x)
 
-fixture_payload <- raw()
-for (entry in list(
-  c("observations", "observations.csv"),
-  c("truth_covariance", "truth_covariance.csv"),
-  c("initial_covariance", "initial_covariance.csv")
-)) {
-  path <- file.path(fixture_directory, entry[[2L]])
-  connection <- file(path, open = "rb")
-  bytes <- readBin(connection, what = "raw", n = as.integer(file.info(path)$size))
-  close(connection)
-  fixture_payload <- c(
-    fixture_payload,
-    charToRaw(entry[[1L]]),
-    as.raw(0L),
-    bytes
-  )
-}
-fixture_sha256 <- as.character(openssl::sha256(fixture_payload))
-if (!identical(fixture_sha256, metadata$sha256)) {
+fixture_hash <- fixture_sha256(fixture_directory)
+if (!identical(fixture_hash, metadata$sha256)) {
   stop("fixture SHA-256 does not match metadata", call. = FALSE)
 }
 
@@ -224,7 +212,7 @@ result <- list(
   dimension = as.integer(metadata$dimension),
   n_observations = as.integer(metadata$n_observations),
   seed = seed,
-  fixture_sha256 = fixture_sha256,
+  fixture_sha256 = fixture_hash,
   implementation = "bspcov",
   version = actual_version,
   device = "cpu",

@@ -1,6 +1,11 @@
 #!/usr/bin/env Rscript
 
 expected_bspcov_version <- "1.0.3"
+file_argument <- grep(
+  "^--file=", commandArgs(trailingOnly = FALSE), value = TRUE
+)[[1L]]
+script_directory <- dirname(normalizePath(sub("^--file=", "", file_argument)))
+source(file.path(script_directory, "fixture_hash.R"))
 
 usage <- function() {
   paste(
@@ -71,21 +76,9 @@ truth <- read_matrix("truth_covariance.csv")
 initial <- read_matrix("initial_covariance.csv")
 p <- ncol(x)
 
-fixture_payload <- raw()
-for (entry in list(
-  c("observations", "observations.csv"),
-  c("truth_covariance", "truth_covariance.csv"),
-  c("initial_covariance", "initial_covariance.csv")
-)) {
-  path <- file.path(fixture_directory, entry[[2L]])
-  connection <- file(path, open = "rb")
-  bytes <- readBin(connection, what = "raw", n = as.integer(file.info(path)$size))
-  close(connection)
-  fixture_payload <- c(fixture_payload, charToRaw(entry[[1L]]), as.raw(0L), bytes)
-}
-fixture_sha256 <- as.character(openssl::sha256(fixture_payload))
+fixture_hash <- fixture_sha256(fixture_directory)
 metadata <- jsonlite::fromJSON(file.path(fixture_directory, "metadata.json"))
-if (!identical(fixture_sha256, metadata$sha256)) {
+if (!identical(fixture_hash, metadata$sha256)) {
   stop("fixture SHA-256 does not match metadata", call. = FALSE)
 }
 
@@ -234,7 +227,7 @@ result <- list(
   version = actual_version,
   dtype = "float64",
   device = "cpu",
-  fixture_sha256 = fixture_sha256,
+  fixture_sha256 = fixture_hash,
   git_revision = git_revision,
   git_dirty = FALSE,
   summary = summary

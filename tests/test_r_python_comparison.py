@@ -17,6 +17,7 @@ FIXTURES_PATH = BENCHMARK_DIR / "fixtures.py"
 PYTHON_RUNNER_PATH = BENCHMARK_DIR / "run_pybspcov.py"
 MATRIX_PATH = BENCHMARK_DIR / "run_matrix.py"
 R_RUNNER_PATH = BENCHMARK_DIR / "run_bspcov.R"
+R_HASH_HELPER_PATH = BENCHMARK_DIR / "fixture_hash.R"
 PARITY_RUNNER_PATH = BENCHMARK_DIR / "run_pybspcov_parity.py"
 R_PARITY_RUNNER_PATH = BENCHMARK_DIR / "run_bspcov_parity.R"
 PARITY_COMPARE_PATH = BENCHMARK_DIR / "compare_parity.py"
@@ -352,6 +353,41 @@ def test_written_fixture_round_trips_with_a_content_hash(tmp_path: Path) -> None
     assert len(metadata["sha256"]) == 64
     for key in fixture:
         np.testing.assert_allclose(loaded[key], fixture[key], rtol=0.0, atol=1e-15)
+
+
+def test_r_fixture_hash_matches_python_without_colon_formatting(tmp_path: Path) -> None:
+    if shutil.which("Rscript") is None:
+        pytest.skip("Rscript is unavailable")
+    fixtures = _module(FIXTURES_PATH, "r_comparison_cross_language_hash")
+    fixture = fixtures.generate_fixture(
+        dimension=4,
+        n_observations=12,
+        seed=31,
+        kind="sparse",
+        density=0.25,
+    )
+    metadata = fixtures.write_fixture(tmp_path, fixture)
+
+    result = subprocess.run(
+        [
+            "Rscript",
+            "--vanilla",
+            "-e",
+            (
+                "arguments <- commandArgs(trailingOnly=TRUE); "
+                "source(arguments[[1L]]); "
+                "cat(fixture_sha256(arguments[[2L]]))"
+            ),
+            str(R_HASH_HELPER_PATH),
+            str(tmp_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == metadata["sha256"]
 
 
 def test_generated_matrix_fixtures_include_committed_p5_parity_case(
