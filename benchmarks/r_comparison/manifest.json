@@ -51,6 +51,7 @@
     "cold_repetitions": 1,
     "warm_repetitions": 3,
     "noisy_warm_repetitions": 5,
-    "relative_range_threshold": 0.1
+    "relative_range_threshold": 0.1,
+    "max_hours": 12.0
   }
 }

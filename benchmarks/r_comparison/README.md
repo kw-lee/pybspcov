@@ -93,6 +93,15 @@ uv run python benchmarks/r_comparison/run_matrix.py \
   --output-dir /tmp/pybspcov-r-comparison/timings
 ```
 
+The manifest caps cumulative cell wall time at 12 hours. If an execution is
+interrupted, resume only the valid cells from the same clean revision:
+
+```bash
+uv run python benchmarks/r_comparison/run_matrix.py \
+  --fixture-root /tmp/pybspcov-r-comparison/fixtures \
+  --output-dir /tmp/pybspcov-r-comparison/timings --resume
+```
+
 Aggregate only after the parity and timing matrices are complete:
 
 ```bash

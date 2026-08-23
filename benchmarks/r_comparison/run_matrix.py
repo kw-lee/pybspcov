@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 import numpy as np
-from core import load_manifest
+from core import load_manifest, validate_timing_record
 from fixtures import generate_fixture, write_fixture
 
 
@@ -166,6 +166,45 @@ def record_external_cold_time(path: Path, seconds: float) -> None:
     path.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def completed_cell_seconds(path: Path, expected_revision: str) -> float | None:
+    """Return a valid current-revision cell's wall time, or None to rerun it."""
+    try:
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+        if len(lines) != 1:
+            return None
+        record = json.loads(lines[0])
+        if not isinstance(record, dict):
+            return None
+        validate_timing_record(record)
+        if record.get("git_revision") != expected_revision:
+            return None
+        seconds = record.get("cold_end_to_end_seconds")
+        if (
+            isinstance(seconds, bool)
+            or not isinstance(seconds, (int, float))
+            or not math.isfinite(seconds)
+            or seconds <= 0.0
+        ):
+            return None
+        return float(seconds)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def remaining_budget_seconds(max_hours: float, spent_seconds: float) -> float:
+    """Return the remaining pre-registered wall-clock budget or fail closed."""
+    if not math.isfinite(max_hours) or max_hours <= 0.0:
+        raise ValueError("max_hours must be finite and positive")
+    if not math.isfinite(spent_seconds) or spent_seconds < 0.0:
+        raise ValueError("spent_seconds must be finite and nonnegative")
+    remaining = max_hours * 3600.0 - spent_seconds
+    if remaining <= 0.0:
+        raise TimeoutError(
+            f"benchmark exhausted its {max_hours:g}-hour wall-clock budget"
+        )
+    return remaining
+
+
 def _cpu_list(available_cpu_ids: Sequence[int], count: int) -> str:
     if len(available_cpu_ids) < count:
         raise RuntimeError(f"benchmark requires {count} available CPU cores")
@@ -242,6 +281,7 @@ def main() -> None:
     parser.add_argument("--generate-fixtures", action="store_true")
     parser.add_argument("--fixtures-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--resume", action="store_true")
     arguments = parser.parse_args()
     manifest = load_manifest(arguments.manifest)
     if arguments.generate_fixtures:
@@ -258,7 +298,24 @@ def main() -> None:
         if hasattr(os, "sched_getaffinity")
         else tuple(range(os.cpu_count() or 1))
     )
+
+    current_revision = subprocess.run(
+        ["git", "-C", str(script_directory.parents[1]), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    max_hours = float(manifest["timing"]["max_hours"])
+    spent_seconds = 0.0
+
     for cell in build_cells(manifest):
+        output = arguments.output_dir / f"{cell.key}.jsonl"
+        if arguments.resume:
+            completed_seconds = completed_cell_seconds(output, current_revision)
+            if completed_seconds is not None:
+                spent_seconds += completed_seconds
+                continue
+
         command = command_for_cell(
             cell,
             script_directory=script_directory,
@@ -270,12 +327,19 @@ def main() -> None:
         if arguments.dry_run:
             print(json.dumps({"key": cell.key, "command": command}))
         else:
+            remaining = remaining_budget_seconds(max_hours, spent_seconds)
             start = time.perf_counter()
-            subprocess.run(command, check=True, env=environment)
+            try:
+                subprocess.run(
+                    command, check=True, env=environment, timeout=remaining
+                )
+            except subprocess.TimeoutExpired as error:
+                raise TimeoutError(
+                    f"benchmark exhausted its {max_hours:g}-hour wall-clock budget"
+                ) from error
             elapsed = time.perf_counter() - start
-            record_external_cold_time(
-                arguments.output_dir / f"{cell.key}.jsonl", elapsed
-            )
+            record_external_cold_time(output, elapsed)
+            spent_seconds += elapsed
 
 
 if __name__ == "__main__":

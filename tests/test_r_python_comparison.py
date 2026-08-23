@@ -81,6 +81,7 @@ def test_manifest_pins_complete_four_method_matrix() -> None:
         "warm_repetitions": 3,
         "noisy_warm_repetitions": 5,
         "relative_range_threshold": 0.1,
+        "max_hours": 12.0,
     }
 
 
@@ -582,6 +583,40 @@ def test_matrix_replaces_runner_cold_time_with_external_process_time(
         "cold_end_to_end_seconds": 2.5,
         "other": "preserved",
     }
+
+
+def test_matrix_resume_only_accepts_valid_current_revision_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    matrix = _module(MATRIX_PATH, "r_comparison_matrix_resume")
+    output = tmp_path / "cell.jsonl"
+    revision = "a" * 40
+    output.write_text(
+        json.dumps(
+            {"git_revision": revision, "cold_end_to_end_seconds": 2.5}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(matrix, "validate_timing_record", lambda record: None)
+
+    assert matrix.completed_cell_seconds(output, revision) == 2.5
+    assert matrix.completed_cell_seconds(output, "b" * 40) is None
+
+    output.write_text("not json\n", encoding="utf-8")
+    assert matrix.completed_cell_seconds(output, revision) is None
+    output.write_text("[]\n", encoding="utf-8")
+    assert matrix.completed_cell_seconds(output, revision) is None
+
+
+
+def test_matrix_enforces_total_wall_clock_budget() -> None:
+    matrix = _module(MATRIX_PATH, "r_comparison_matrix_budget")
+
+    assert matrix.remaining_budget_seconds(12.0, 3600.0) == pytest.approx(39600.0)
+    with pytest.raises(TimeoutError, match="12-hour"):
+        matrix.remaining_budget_seconds(12.0, 43200.0)
+
 
 
 def test_r_runner_help_exposes_all_four_methods_without_loading_bspcov() -> None:
