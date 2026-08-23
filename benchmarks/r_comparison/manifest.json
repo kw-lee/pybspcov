@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "bspcov_version": "1.0.3",
+  "seed": 20260803,
+  "dimensions": [50, 100, 200],
+  "n_factor": 3,
+  "sparse_density": 0.05,
+  "methods": {
+    "bm": {
+      "burnin": 50,
+      "samples": 50
+    },
+    "sbm": {
+      "burnin": 50,
+      "samples": 50,
+      "cutoff_method": "correlation",
+      "retained_fraction": 0.2
+    },
+    "bandppp": {
+      "samples_per_batch": 100,
+      "epsilon": 0.05,
+      "bandwidth_divisor": 20
+    },
+    "thresholdppp": {
+      "samples_per_batch": 100,
+      "threshold": 0.1,
+      "method": "hard",
+      "epsilon": 0.1
+    }
+  },
+  "parity": {
+    "bm_sbm_burnin": 2000,
+    "bm_sbm_samples_per_chain": 2000,
+    "bm_sbm_chains": 4,
+    "ppp_total_samples": 5000,
+    "batches": 50,
+    "mcse_multiplier": 6.0
+  },
+  "optimized": {
+    "parallelism": 8,
+    "cpu_cores": 8,
+    "r_dtype": "float64",
+    "python_dtypes": ["float32", "float64"]
+  },
+  "cpu_baseline": {
+    "parallelism": 1,
+    "cpu_cores": 1,
+    "dtype": "float64"
+  },
+  "timing": {
+    "cold_repetitions": 1,
+    "warm_repetitions": 3,
+    "noisy_warm_repetitions": 5,
+    "relative_range_threshold": 0.1
+  }
+}
