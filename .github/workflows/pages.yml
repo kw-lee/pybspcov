@@ -32,6 +32,7 @@ jobs:
           enable-cache: true
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
       - run: uv sync --locked --all-groups
+      - run: uv run python benchmarks/render_docs_benchmarks.py --check
       - run: >-
           uv run sphinx-polyversion --sequential
           docs/poly.py docs/_build/html

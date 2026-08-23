@@ -58,6 +58,7 @@ def test_pages_workflow_builds_and_deploys_current_docs() -> None:
     build_commands = [step["run"] for step in build_steps if "run" in step]
     assert build_commands == [
         "uv sync --locked --all-groups",
+        "uv run python benchmarks/render_docs_benchmarks.py --check",
         "uv run sphinx-polyversion --sequential docs/poly.py docs/_build/html",
     ]
 

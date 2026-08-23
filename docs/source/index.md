@@ -128,6 +128,7 @@ installation
 datasets
 visualization
 parity
+benchmarks
 api
 development
 ```

@@ -65,4 +65,4 @@ nitpick_ignore = [
     ("py:class", "pathlib.Path"),
 ]
 
-exclude_patterns = []
+exclude_patterns = ["_generated/**"]

@@ -47,6 +47,7 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked --all-groups
+      - run: uv run python benchmarks/render_docs_benchmarks.py --check
       - run: uv run sphinx-build -W --keep-going -b html docs/source docs/_build/html
 
   build:
