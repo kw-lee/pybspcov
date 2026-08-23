@@ -376,7 +376,9 @@ def test_r_fixture_hash_matches_python_without_colon_formatting(tmp_path: Path) 
             (
                 "arguments <- commandArgs(trailingOnly=TRUE); "
                 "source(arguments[[1L]]); "
-                "cat(fixture_sha256(arguments[[2L]]))"
+                "hash <- fixture_sha256(arguments[[2L]]); "
+                "stopifnot(is.character(hash), is.null(attributes(hash))); "
+                "cat(hash)"
             ),
             str(R_HASH_HELPER_PATH),
             str(tmp_path),

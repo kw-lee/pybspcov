@@ -15,5 +15,5 @@ fixture_sha256 <- function(directory) {
     payload <- c(payload, charToRaw(entry[[1L]]), as.raw(0L), bytes)
   }
   hash <- as.character(openssl::sha256(payload))
-  tolower(gsub(":", "", hash, fixed = TRUE))
+  unclass(tolower(gsub(":", "", hash, fixed = TRUE)))
 }
