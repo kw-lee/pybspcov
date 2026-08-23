@@ -1,19 +1,38 @@
 import importlib.util
 import json
 import math
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 PROJECT_ROOT = Path(__file__).parents[1]
 BENCHMARK_DIR = PROJECT_ROOT / "benchmarks" / "r_comparison"
 CORE_PATH = BENCHMARK_DIR / "core.py"
 MANIFEST_PATH = BENCHMARK_DIR / "manifest.json"
+FIXTURES_PATH = BENCHMARK_DIR / "fixtures.py"
+PYTHON_RUNNER_PATH = BENCHMARK_DIR / "run_pybspcov.py"
+MATRIX_PATH = BENCHMARK_DIR / "run_matrix.py"
+R_RUNNER_PATH = BENCHMARK_DIR / "run_bspcov.R"
+
+sys.path.insert(0, str(BENCHMARK_DIR))
 
 
 def _core():
     assert CORE_PATH.is_file(), "benchmarks/r_comparison/core.py is required"
     spec = importlib.util.spec_from_file_location("r_comparison_core", CORE_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _module(path: Path, name: str):
+    assert path.is_file(), f"{path.relative_to(PROJECT_ROOT)} is required"
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -254,3 +273,202 @@ def test_timing_record_rejects_dirty_or_fallback_runs() -> None:
     fallback = dict(record, actual_platform="cpu")
     with pytest.raises(ValueError, match="CUDA"):
         core.validate_timing_record(fallback)
+
+
+def test_sparse_fixture_is_deterministic_centered_and_positive_definite() -> None:
+    fixtures = _module(FIXTURES_PATH, "r_comparison_fixtures")
+
+    first = fixtures.generate_fixture(
+        dimension=5,
+        n_observations=15,
+        seed=17,
+        kind="sparse",
+        density=0.2,
+    )
+    second = fixtures.generate_fixture(
+        dimension=5,
+        n_observations=15,
+        seed=17,
+        kind="sparse",
+        density=0.2,
+    )
+
+    for key in ("observations", "truth_covariance", "initial_covariance"):
+        np.testing.assert_array_equal(first[key], second[key])
+    np.testing.assert_allclose(first["observations"].mean(axis=0), 0.0, atol=1e-12)
+    assert np.all(np.linalg.eigvalsh(first["truth_covariance"]) > 0.0)
+    assert np.all(np.linalg.eigvalsh(first["initial_covariance"]) > 0.0)
+
+
+def test_banded_fixture_has_no_entries_outside_requested_band() -> None:
+    fixtures = _module(FIXTURES_PATH, "r_comparison_fixtures_banded")
+
+    fixture = fixtures.generate_fixture(
+        dimension=6,
+        n_observations=18,
+        seed=23,
+        kind="banded",
+        bandwidth=2,
+    )
+
+    truth = fixture["truth_covariance"]
+    for row in range(6):
+        for column in range(6):
+            if abs(row - column) > 2:
+                assert truth[row, column] == 0.0
+    assert np.all(np.linalg.eigvalsh(truth) > 0.0)
+
+
+def test_written_fixture_round_trips_with_a_content_hash(tmp_path: Path) -> None:
+    fixtures = _module(FIXTURES_PATH, "r_comparison_fixtures_roundtrip")
+    fixture = fixtures.generate_fixture(
+        dimension=4,
+        n_observations=12,
+        seed=29,
+        kind="sparse",
+        density=0.25,
+    )
+
+    metadata = fixtures.write_fixture(tmp_path, fixture)
+    loaded = fixtures.load_fixture(tmp_path)
+
+    assert metadata == {
+        "dimension": 4,
+        "n_observations": 12,
+        "sha256": fixtures.fixture_sha256(tmp_path),
+    }
+    assert len(metadata["sha256"]) == 64
+    for key in fixture:
+        np.testing.assert_allclose(loaded[key], fixture[key], rtol=0.0, atol=1e-15)
+
+
+@pytest.mark.parametrize(
+    ("method", "expected_class", "expected_attributes"),
+    [
+        ("bm", "BMSPCov", {"burnin": 50, "n_samples": 50}),
+        (
+            "sbm",
+            "SBMSPCov",
+            {
+                "burnin": 50,
+                "n_samples": 50,
+                "cutoff_method": "correlation",
+                "retained_fraction": 0.2,
+            },
+        ),
+        (
+            "bandppp",
+            "BandPPP",
+            {"bandwidth": 5, "epsilon": 0.05, "n_samples": 100},
+        ),
+        (
+            "thresholdppp",
+            "ThresholdPPP",
+            {
+                "threshold": 0.1,
+                "method": "hard",
+                "epsilon": 0.1,
+                "n_samples": 100,
+            },
+        ),
+    ],
+)
+def test_python_runner_builds_manifest_pinned_estimators(
+    method: str, expected_class: str, expected_attributes: dict[str, object]
+) -> None:
+    runner = _module(PYTHON_RUNNER_PATH, "r_comparison_python_runner")
+    manifest = _core().load_manifest(MANIFEST_PATH)
+
+    estimator = runner.build_estimator(
+        method,
+        dimension=100,
+        dtype="float64",
+        device="cpu",
+        parallelism=1,
+        manifest=manifest,
+    )
+
+    assert type(estimator).__name__ == expected_class
+    assert estimator.dtype == "float64"
+    assert estimator.device == "cpu"
+    assert estimator.n_chains == 1
+    for attribute, expected in expected_attributes.items():
+        assert getattr(estimator, attribute) == expected
+
+
+def test_python_runner_executes_real_thresholdppp_smoke_cell() -> None:
+    runner = _module(PYTHON_RUNNER_PATH, "r_comparison_python_runner_smoke")
+    manifest = _core().load_manifest(MANIFEST_PATH)
+    fixture = _module(FIXTURES_PATH, "r_comparison_fixtures_smoke").generate_fixture(
+        dimension=3,
+        n_observations=9,
+        seed=31,
+        kind="sparse",
+        density=0.3,
+    )
+
+    result = runner.measure_cell(
+        observations=fixture["observations"],
+        truth_covariance=fixture["truth_covariance"],
+        method="thresholdppp",
+        dtype="float32",
+        device="cpu",
+        parallelism=1,
+        manifest=manifest,
+        seed=37,
+        warm_repetitions=3,
+        smoke_samples=2,
+    )
+
+    assert result["actual_platform"] == "cpu"
+    assert result["retained_draws"] == 2
+    assert result["cold_fit_seconds"] > 0.0
+    assert len(result["warm_seconds"]) in {3, 5}
+    assert result["posterior_mean_finite"] is True
+    assert result["posterior_mean_symmetric"] is True
+    assert result["posterior_mean_spd"] is True
+    assert result["rejected_sweeps"] == 0
+
+
+def test_matrix_contains_only_the_pre_registered_sixty_cells() -> None:
+    matrix = _module(MATRIX_PATH, "r_comparison_matrix")
+    manifest = _core().load_manifest(MANIFEST_PATH)
+
+    cells = matrix.build_cells(manifest)
+
+    assert len(cells) == 60
+    assert len({cell.key for cell in cells}) == 60
+    assert sum(cell.configuration == "optimized" for cell in cells) == 36
+    assert sum(cell.configuration == "cpu_baseline" for cell in cells) == 24
+    assert any(
+        cell.method == "bm"
+        and cell.dimension == 200
+        and cell.implementation == "pybspcov"
+        and cell.device == "gpu"
+        and cell.dtype == "float32"
+        and cell.parallelism == 8
+        and cell.cpu_cores == 8
+        for cell in cells
+    )
+    assert all(
+        cell.dtype == "float64"
+        for cell in cells
+        if cell.configuration == "cpu_baseline"
+    )
+
+
+def test_r_runner_help_exposes_all_four_methods_without_loading_bspcov() -> None:
+    if shutil.which("Rscript") is None:
+        pytest.skip("Rscript is unavailable")
+    assert R_RUNNER_PATH.is_file(), "benchmarks/r_comparison/run_bspcov.R is required"
+
+    result = subprocess.run(
+        ["Rscript", "--vanilla", str(R_RUNNER_PATH), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "bm|sbm|bandppp|thresholdppp" in result.stdout
+    assert "bspcov 1.0.3" in result.stdout
