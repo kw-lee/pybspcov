@@ -112,7 +112,8 @@ uv run python benchmarks/r_comparison/aggregate.py \
 
 uv run python benchmarks/r_comparison/render_readme.py \
   --summary /tmp/pybspcov-r-comparison/summary.json \
-  --baseline BASELINE-NAME
+  --baseline BASELINE-NAME \
+  --execution-note 'Describe load, lane concurrency, and other run conditions.'
 ```
 
 Copy the manifest, raw JSONL, parity artifacts, aggregate summary, commands,

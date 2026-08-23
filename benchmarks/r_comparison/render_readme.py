@@ -18,8 +18,12 @@ METHOD_LABELS = {
 }
 
 
-def render_section(summary: Mapping[str, object], *, baseline: str) -> str:
+def render_section(
+    summary: Mapping[str, object], *, baseline: str, execution_note: str
+) -> str:
     """Render only a complete, validated four-method summary."""
+    if not execution_note.strip():
+        raise ValueError("README rendering requires an execution note")
     if summary.get("schema_version") != "1.0" or summary.get("complete") is not True:
         raise ValueError("README rendering requires a complete schema 1.0 summary")
     methods = summary.get("methods")
@@ -34,6 +38,8 @@ def render_section(summary: Mapping[str, object], *, baseline: str) -> str:
             "The headline compares total wall time for R CPU 8-worker execution "
             "with Python GPU vmap-8 execution on the same inputs."
         ),
+        "",
+        execution_note.strip(),
         "",
         "| Method | Validated Python dtype | R CPU 8-worker (s) | Python GPU vmap-8 (s) | p=200 speedup | p=50/100/200 geometric mean |",
         "| --- | --- | ---: | ---: | ---: | ---: |",
@@ -109,13 +115,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--summary", type=Path, required=True)
     parser.add_argument("--baseline", required=True)
+    parser.add_argument("--execution-note", required=True)
     parser.add_argument("--readme", type=Path, default=project_root / "README.md")
     parser.add_argument("--check", action="store_true")
     arguments = parser.parse_args()
     summary = json.loads(arguments.summary.read_text(encoding="utf-8"))
     sync_readme(
         arguments.readme,
-        render_section(summary, baseline=arguments.baseline),
+        render_section(
+            summary,
+            baseline=arguments.baseline,
+            execution_note=arguments.execution_note,
+        ),
         check=arguments.check,
     )
 

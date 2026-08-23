@@ -156,7 +156,11 @@ def test_rendered_readme_leads_with_large_optimized_result_and_discloses_modes()
     manifest = core.load_manifest(BENCHMARK_DIR / "manifest.json")
     summary = aggregate.aggregate_records(_records(), _parity(), manifest)
 
-    rendered = renderer.render_section(summary, baseline="test-baseline")
+    rendered = renderer.render_section(
+        summary,
+        baseline="test-baseline",
+        execution_note="Measured under the current system load; CPU and GPU lanes ran concurrently.",
+    )
 
     assert "All four float64 parity gates passed" in rendered
     assert "R CPU 8-worker" in rendered
@@ -164,7 +168,11 @@ def test_rendered_readme_leads_with_large_optimized_result_and_discloses_modes()
     assert "| BM | float32 | 20.000 | 5.000 | 4.000x | 4.000x |" in rendered
     assert "single-core float64" in rendered
     assert "host- and workload-specific" in rendered
+    assert "current system load" in rendered
+    assert "CPU and GPU lanes ran concurrently" in rendered
     assert "test-baseline" in rendered
+    with pytest.raises(ValueError, match="execution note"):
+        renderer.render_section(summary, baseline="test-baseline", execution_note="   ")
 
 
 def test_sync_readme_replaces_only_generated_markers_and_checks_staleness(

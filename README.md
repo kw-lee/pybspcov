@@ -31,10 +31,29 @@ See the [full protocol and reproduction commands](benchmarks/r_comparison/README
 <!-- r-python-benchmark:start -->
 ### R `bspcov` comparison
 
-A complete four-method result has not been published yet. The renderer rejects
-partial matrices, dirty worktrees, version mismatches, GPU-to-CPU fallback, and
-failed float64 parity instead of publishing provisional speedups.
+All four float64 parity gates passed against `bspcov` 1.0.3. The headline compares total wall time for R CPU 8-worker execution with Python GPU vmap-8 execution on the same inputs.
 
+Measured under the current system load (load1 approximately 80-93): CPU and GPU lanes ran concurrently until both CPU lanes completed; the remaining GPU cells continued under the same external 80-worker CPU load.
+
+| Method | Validated Python dtype | R CPU 8-worker (s) | Python GPU vmap-8 (s) | p=200 speedup | p=50/100/200 geometric mean |
+| --- | --- | ---: | ---: | ---: | ---: |
+| BM | float32 | 322.876 | 251.827 | 1.282x | 1.014x |
+| SBM | float32 | 159.317 | 243.186 | 0.655x | 0.756x |
+| BandPPP | float32 | 3.747 | 0.102 | 36.901x | 36.407x |
+| ThresholdPPP | float32 | 5.821 | 0.071 | 81.905x | 79.326x |
+
+The matching single-core float64 baseline separates implementation differences from GPU and multi-chain acceleration.
+
+| Method | R CPU (s) | Python CPU (s) | Python speedup | Cold optimized speedup |
+| --- | ---: | ---: | ---: | ---: |
+| BM | 195.724 | 107.284 | 1.824x | 1.819x |
+| SBM | 58.419 | 71.983 | 0.812x | 0.954x |
+| BandPPP | 1.884 | 1.292 | 1.459x | 1.810x |
+| ThresholdPPP | 2.151 | 1.154 | 1.864x | 1.883x |
+
+These host- and workload-specific results were recorded at revision `56920dd04f1a56446035a3362a1f2ccc3172bfab`. They do not establish universal performance superiority.
+
+[Full protocol, raw timings, environment, and limitations](https://github.com/kw-lee/pybspcov/blob/main/benchmarks/baselines/0.1.0.dev0/r-python/README.md)
 <!-- r-python-benchmark:end -->
 
 ## Quickstart

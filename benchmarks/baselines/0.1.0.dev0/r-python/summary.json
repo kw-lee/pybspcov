@@ -1,0 +1,64 @@
+{
+  "complete": true,
+  "dimensions": [
+    50,
+    100,
+    200
+  ],
+  "methods": {
+    "bandppp": {
+      "geometric_mean_speedup": 36.40744932866093,
+      "headline_dtype": "float32",
+      "large": {
+        "cold_speedup": 1.8104390092493976,
+        "cpu_baseline_speedup": 1.4585117288756044,
+        "optimized_speedup": 36.901179799393745,
+        "python_cpu_baseline_seconds": 1.2917276993393898,
+        "python_gpu_seconds": 0.10154146887362003,
+        "r_cpu_baseline_seconds": 1.8840000000000003,
+        "r_optimized_seconds": 3.7469999999999963
+      }
+    },
+    "bm": {
+      "geometric_mean_speedup": 1.0139216452359763,
+      "headline_dtype": "float32",
+      "large": {
+        "cold_speedup": 1.8192865714503084,
+        "cpu_baseline_speedup": 1.824354354526801,
+        "optimized_speedup": 1.2821348721400414,
+        "python_cpu_baseline_seconds": 107.28398214653134,
+        "python_gpu_seconds": 251.82686082087457,
+        "r_cpu_baseline_seconds": 195.72400000000005,
+        "r_optimized_seconds": 322.87600000000003
+      }
+    },
+    "sbm": {
+      "geometric_mean_speedup": 0.7562555766693321,
+      "headline_dtype": "float32",
+      "large": {
+        "cold_speedup": 0.9540442081109188,
+        "cpu_baseline_speedup": 0.8115613276485771,
+        "optimized_speedup": 0.6551227798272147,
+        "python_cpu_baseline_seconds": 71.98346940614283,
+        "python_gpu_seconds": 243.18647573515773,
+        "r_cpu_baseline_seconds": 58.41900000000001,
+        "r_optimized_seconds": 159.317
+      }
+    },
+    "thresholdppp": {
+      "geometric_mean_speedup": 79.32595648479173,
+      "headline_dtype": "float32",
+      "large": {
+        "cold_speedup": 1.882937231137251,
+        "cpu_baseline_speedup": 1.8641203603524095,
+        "optimized_speedup": 81.90465886041359,
+        "python_cpu_baseline_seconds": 1.1538954488933086,
+        "python_gpu_seconds": 0.07107043825089931,
+        "r_cpu_baseline_seconds": 2.151,
+        "r_optimized_seconds": 5.820999999999998
+      }
+    }
+  },
+  "revision": "56920dd04f1a56446035a3362a1f2ccc3172bfab",
+  "schema_version": "1.0"
+}
