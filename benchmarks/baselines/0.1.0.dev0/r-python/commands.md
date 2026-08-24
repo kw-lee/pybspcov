@@ -83,9 +83,8 @@ JAX_PLATFORMS=cpu
 
 This prevented CPU children from reserving RTX 3090 memory while the GPU lane
 was active. GPU commands used `uv run --frozen --extra cuda12`; R commands used
-`Rscript --vanilla`. The actual generated subprocess commands and all their
-resource fields are recoverable from `manifest.json` and the 60 raw JSONL
-records.
+`Rscript --vanilla`. The generated subprocess commands are defined by the
+tracked `benchmarks/r_comparison/manifest.json` and runner implementation.
 
 ## Aggregate and render
 

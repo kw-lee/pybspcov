@@ -53,7 +53,7 @@ The matching single-core float64 baseline separates implementation differences f
 
 These host- and workload-specific results were recorded at revision `56920dd04f1a56446035a3362a1f2ccc3172bfab`. They do not establish universal performance superiority.
 
-[Full protocol, raw timings, environment, and limitations](https://github.com/kw-lee/pybspcov/blob/main/benchmarks/baselines/0.1.0.dev0/r-python/README.md)
+[Full protocol, environment, and limitations](https://github.com/kw-lee/pybspcov/blob/main/benchmarks/baselines/0.1.0.dev0/r-python/README.md)
 <!-- r-python-benchmark:end -->
 
 ## Quickstart

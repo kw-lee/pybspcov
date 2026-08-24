@@ -1,8 +1,8 @@
 # R/Python comparison: concurrent loaded-host run
 
-This is the complete archived baseline behind the generated table in the project
-README. All 60 timing cells and all eight method/dtype parity gates passed for
-revision `56920dd04f1a56446035a3362a1f2ccc3172bfab`.
+This is the human-readable benchmark record behind the generated table in the
+project README. All 60 timing cells and all eight method/dtype parity gates
+passed for revision `56920dd04f1a56446035a3362a1f2ccc3172bfab`.
 
 ## Results
 
@@ -50,9 +50,9 @@ An earlier diagnostic attempt allowed CPU children to initialize CUDA. Those
 artifacts were moved to a separate temporary contamination directory and are
 not included here. BLAS thread counts were fixed at one for every child.
 
-Each timing artifact contains one fresh-process cold end-to-end time and three
-warm fits, extended to five when the first three had a relative range above
-10%. Of the final 60 cells, 42 used three warm repetitions and 18 used five.
+Each timing cell measured one fresh-process cold end-to-end time and three warm
+fits, extended to five when the first three had a relative range above 10%. Of
+the final 60 cells, 42 used three warm repetitions and 18 used five.
 
 ## Environment
 
@@ -66,20 +66,19 @@ warm fits, extended to five when the first three had a relative range above
 | JAX | 0.11.0 with the project `cuda12` extra for GPU cells |
 | Precision | R optimized and both CPU baselines float64; Python GPU float32 and float64 |
 
-See `environment.json`, `python-freeze.txt`, and `r-session-info.txt` for the
-machine-readable settings and dependency snapshots.
+See `python-freeze.txt` and `r-session-info.txt` for dependency snapshots.
 
-## Archived evidence
+## Retained record
 
-- `manifest.json`: pre-registered dimensions, seeds, repetitions, and gates.
-- `timings/`: all 60 raw timing JSONL records.
-- `parity/`: four R and eight Python raw parity artifacts.
-- `parity.json`: the eight parity verdicts and detailed MCSE comparisons.
-- `summary.json`: the validated aggregate used to render the project README.
 - `commands.md`: fixture, parity, lane, aggregation, and rendering commands.
+- `python-freeze.txt`: the Python dependency snapshot.
+- `r-session-info.txt`: the R dependency and platform snapshot.
 
-All raw timing and parity records identify the clean benchmark revision
-`56920dd04f1a56446035a3362a1f2ccc3172bfab`. The later documentation commit does
+The generated JSON and JSONL timing, parity, and aggregation intermediates are
+not tracked in Git. The commands write them below `/tmp`, and they can be
+regenerated from the tracked benchmark runner and manifest. All records used to
+produce these tables identified the clean benchmark revision
+`56920dd04f1a56446035a3362a1f2ccc3172bfab`; the later documentation commits do
 not change the measured implementation.
 
 ## Limitations

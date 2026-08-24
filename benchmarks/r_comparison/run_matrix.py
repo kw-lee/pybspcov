@@ -330,9 +330,7 @@ def main() -> None:
             remaining = remaining_budget_seconds(max_hours, spent_seconds)
             start = time.perf_counter()
             try:
-                subprocess.run(
-                    command, check=True, env=environment, timeout=remaining
-                )
+                subprocess.run(command, check=True, env=environment, timeout=remaining)
             except subprocess.TimeoutExpired as error:
                 raise TimeoutError(
                     f"benchmark exhausted its {max_hours:g}-hour wall-clock budget"

@@ -171,6 +171,8 @@ def test_rendered_readme_leads_with_large_optimized_result_and_discloses_modes()
     assert "current system load" in rendered
     assert "CPU and GPU lanes ran concurrently" in rendered
     assert "test-baseline" in rendered
+    assert "Full protocol, environment, and limitations" in rendered
+    assert "raw timings" not in rendered
     with pytest.raises(ValueError, match="execution note"):
         renderer.render_section(summary, baseline="test-baseline", execution_note="   ")
 

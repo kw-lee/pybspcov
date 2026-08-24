@@ -501,7 +501,6 @@ def test_python_runner_executes_real_thresholdppp_smoke_cell() -> None:
     assert result["rejected_sweeps"] == 0
 
 
-
 def test_python_runner_normalizes_jax_nvidia_gpu_platform_to_cuda() -> None:
     runner = _module(PYTHON_RUNNER_PATH, "r_comparison_python_runner_platform")
 
@@ -513,6 +512,7 @@ def test_python_runner_normalizes_jax_nvidia_gpu_platform_to_cuda() -> None:
     assert runner._actual_platform(Device("gpu", "NVIDIA GeForce RTX 3090")) == "cuda"
     assert runner._actual_platform(Device("cpu", "cpu")) == "cpu"
     assert runner._actual_platform(Device("gpu", "AMD Radeon")) == "gpu"
+
 
 def test_matrix_contains_only_the_pre_registered_sixty_cells() -> None:
     matrix = _module(MATRIX_PATH, "r_comparison_matrix")
@@ -592,10 +592,7 @@ def test_matrix_resume_only_accepts_valid_current_revision_records(
     output = tmp_path / "cell.jsonl"
     revision = "a" * 40
     output.write_text(
-        json.dumps(
-            {"git_revision": revision, "cold_end_to_end_seconds": 2.5}
-        )
-        + "\n",
+        json.dumps({"git_revision": revision, "cold_end_to_end_seconds": 2.5}) + "\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(matrix, "validate_timing_record", lambda record: None)
@@ -609,14 +606,12 @@ def test_matrix_resume_only_accepts_valid_current_revision_records(
     assert matrix.completed_cell_seconds(output, revision) is None
 
 
-
 def test_matrix_enforces_total_wall_clock_budget() -> None:
     matrix = _module(MATRIX_PATH, "r_comparison_matrix_budget")
 
     assert matrix.remaining_budget_seconds(12.0, 3600.0) == pytest.approx(39600.0)
     with pytest.raises(TimeoutError, match="12-hour"):
         matrix.remaining_budget_seconds(12.0, 43200.0)
-
 
 
 def test_r_runner_help_exposes_all_four_methods_without_loading_bspcov() -> None:

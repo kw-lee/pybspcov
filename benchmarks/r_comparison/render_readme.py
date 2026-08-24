@@ -86,7 +86,7 @@ def render_section(
                 f"`{revision}`. They do not establish universal performance superiority."
             ),
             "",
-            f"[Full protocol, raw timings, environment, and limitations]({report_url})",
+            f"[Full protocol, environment, and limitations]({report_url})",
             "",
         ]
     )
