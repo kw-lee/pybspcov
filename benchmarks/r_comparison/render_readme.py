@@ -83,7 +83,7 @@ def render_section(
             "",
             (
                 f"These host- and workload-specific results were recorded at revision "
-                f"`{revision}`. They do not establish universal performance superiority."
+                f"`{revision}`."
             ),
             "",
             f"[Full protocol, environment, and limitations]({report_url})",

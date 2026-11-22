@@ -20,13 +20,14 @@ and resource checksum. `load_colon(return_X_y=True)` returns the array pair
 directly. Install the `data` extra to request pandas frames with
 `as_frame=True`.
 
-`load_colon` follows the Python samples-by-features convention and therefore
+`load_colon` follows the Python samples-by-features convention, so it
 transposes the upstream R `colon` object. The raw expression data remain
-untransformed until `preprocess_colon` is called. Tissue labels must be finite non-zero signed values.
+untransformed until `preprocess_colon` is called. Tissue labels must be finite
+non-zero signed values.
 
 `preprocess_sp500` follows the upstream sector-then-symbol column order and
 includes the first observed month using `quantmod::periodReturn` semantics. A
 committed R fixture validates monthly returns and the fixed-factor residual
-path. The optional automatic factor count uses the documented spectral-ratio
-selector rather than `hdbinseg`'s `ah` criterion; pass `n_factors` for a
-reproducible cross-language factor rank.
+path. The automatic factor count uses a spectral-ratio selector, which can
+differ from `hdbinseg`'s `ah` criterion; pass `n_factors` to use the same
+factor rank as R.

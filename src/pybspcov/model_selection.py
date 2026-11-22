@@ -10,7 +10,8 @@ from jax import Array
 from jax.scipy.special import logsumexp
 from jax.typing import ArrayLike
 
-from pybspcov.estimators import BandPPP, ThresholdPPP, _validate_key
+from pybspcov._validation import validate_key
+from pybspcov.estimators import BandPPP, ThresholdPPP
 from pybspcov.kernels.thresholdppp import ThresholdMethod
 
 type DTypeName = Literal["float32", "float64"]
@@ -106,7 +107,7 @@ def cross_validate_band_ppp(
     device: str | jax.Device | None = None,
 ) -> BandCVResult:
     """Evaluate BandPPP parameters with leave-one-out predictive density."""
-    _validate_key(key)
+    validate_key(key)
     x = jnp.asarray(X, dtype=jnp.dtype(dtype))
     if x.ndim != 2 or x.shape[0] < 2 or x.shape[1] < 2:
         raise ValueError("X must have at least two rows and two columns")
@@ -159,7 +160,7 @@ def cross_validate_threshold_ppp(
     device: str | jax.Device | None = None,
 ) -> ThresholdCVResult:
     """Evaluate threshold PPP parameters with spectral-norm fold error."""
-    _validate_key(key)
+    validate_key(key)
     if isinstance(n_folds, bool) or not isinstance(n_folds, int):
         raise TypeError("n_folds must be an integer")
     x = jnp.asarray(X, dtype=jnp.dtype(dtype))

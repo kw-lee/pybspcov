@@ -1,7 +1,7 @@
 # R `bspcov` 1.0.3 feature map
 
 pybspcov exposes every documented user-facing function and bundled dataset
-from R `bspcov` 1.0.3 through an idiomatic Python API.
+from R `bspcov` 1.0.3 through a Python API.
 
 | R API | Python API |
 |---|---|
@@ -31,8 +31,7 @@ assignments. `cross_validate_band_ppp` averages the leave-one-out
 log predictive densities, matching the executable R 1.0.3 source; the R help
 formula displays a sum even though `cv.bandPPP()` calls `mean()`.
 
-The SP500 preprocessing function implements the complete monthly-return,
-factor-reconstruction, and residual-output workflow without R runtime
-dependencies. Its automatic factor-count selector is a documented spectral
-ratio implementation rather than a byte-for-byte port of `hdbinseg`'s `ah`
-criterion; pass `n_factors` to make that choice explicit and reproducible.
+The SP500 preprocessing function computes monthly returns, reconstructs the
+factors, and returns the residuals without calling R. Its automatic
+factor-count selector uses a spectral ratio and is not a port of `hdbinseg`'s
+`ah` criterion, so pass `n_factors` to fix the factor count.
