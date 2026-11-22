@@ -217,8 +217,8 @@ never grant issue-triage or code-generation automation release credentials.
 ## Documentation Integration
 
 Sphinx uses `docs/source/` as its explicit source directory and
-`docs/_build/` as generated output. Engineering records under
-`docs/superpowers/` therefore do not enter the public documentation build.
+`docs/_build/` as generated output. Maintainer documents under
+`docs/development/` therefore do not enter the public documentation build.
 The repository-level `examples/` directory remains executable source; selected
 examples may later be rendered into the public guide without copying their
 implementation.

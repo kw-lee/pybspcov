@@ -176,15 +176,8 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Branch,
 worktree, parallel ownership, and protected-`main` rules are defined in the
 [development workflow](docs/development/workflow.md).
 
-## Design
-
-The approved architecture, numerical contract, validation strategy, benchmark
-methodology, repository policy, and initial success criteria are documented in
-the [bootstrap and initial port design](docs/superpowers/specs/2026-08-01-pybspcov-bootstrap-design.md).
-
 The [documentation layout](docs/README.md) keeps Sphinx sources separate from
-internal design and plan records. The [development workflow](docs/development/workflow.md)
-defines protected-branch, worktree, review, and parallel-integration rules.
+maintainer documents.
 
 Repository content is written in English. AI-assisted contributions will be
 treated as unreviewed suggestions and will remain subject to human review,

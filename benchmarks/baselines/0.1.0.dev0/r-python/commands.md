@@ -57,7 +57,8 @@ partitioned them as follows and ran the three serial lanes with a
 
 ```python
 gpu_cells = [
-    cell for cell in build_cells(manifest)
+    cell
+    for cell in build_cells(manifest)
     if cell.implementation == "pybspcov" and cell.device == "gpu"
 ]
 cpu_cells = [cell for cell in build_cells(manifest) if cell not in gpu_cells]

@@ -1,7 +1,6 @@
 import csv
 import json
 import math
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -9,16 +8,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-BENCHMARK_DIR = PROJECT_ROOT / "benchmarks" / "r_example"
-sys.path.insert(0, str(BENCHMARK_DIR))
-
-from run_pybspcov import summarize_draws
-
 from pybspcov import SBMSPCov
 from pybspcov.kernels import unpack_lower_triangle_column_major
 
-DATA_DIR = BENCHMARK_DIR / "data"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = PROJECT_ROOT / "benchmarks" / "r_example" / "data"
+QUANTILE_PROBABILITIES = (0.025, 0.5, 0.975)
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "r" / "bspcov-1.0.3"
 SUMMARY_PATH = FIXTURE_DIR / "sbm_public_corr_summary.csv"
 METADATA_PATH = FIXTURE_DIR / "sbm_public_corr_metadata.json"
@@ -127,6 +122,48 @@ def _assert_six_combined_mcse(
     )
 
 
+def _summarize_draws(draws: np.ndarray, truth: np.ndarray) -> dict[str, Any]:
+    """Summarize covariance draws and estimate MCSE with contiguous batches."""
+    draws = np.asarray(draws, dtype=np.float64)
+    truth = np.asarray(truth, dtype=np.float64)
+    n_samples = draws.shape[0]
+    n_batches = min(20, n_samples // 2)
+    batch_size = n_samples // n_batches
+    batches = draws[: n_batches * batch_size].reshape(
+        n_batches, batch_size, draws.shape[1], draws.shape[2]
+    )
+
+    quantiles = np.quantile(draws, QUANTILE_PROBABILITIES, axis=0, method="linear")
+    batch_quantiles = np.stack(
+        [
+            np.quantile(batch, QUANTILE_PROBABILITIES, axis=0, method="linear")
+            for batch in batches
+        ]
+    )
+
+    posterior_mean = np.mean(draws, axis=0)
+    batch_means = np.mean(batches, axis=1)
+    batch_rmses = np.sqrt(np.mean(np.square(batch_means - truth), axis=(1, 2)))
+
+    def batch_mcse(values: np.ndarray) -> np.ndarray:
+        return np.std(values, axis=0, ddof=1) / np.sqrt(n_batches)
+
+    return {
+        "rmse": float(np.sqrt(np.mean(np.square(posterior_mean - truth)))),
+        "rmse_mcse": float(batch_mcse(batch_rmses)),
+        "posterior_mean": posterior_mean,
+        "posterior_mean_mcse": batch_mcse(batch_means),
+        "posterior_sd": np.std(draws, axis=0, ddof=1),
+        "posterior_sd_mcse": batch_mcse(np.std(batches, axis=1, ddof=1)),
+        "q025": quantiles[0],
+        "q025_mcse": batch_mcse(batch_quantiles[:, 0]),
+        "q50": quantiles[1],
+        "q50_mcse": batch_mcse(batch_quantiles[:, 1]),
+        "q975": quantiles[2],
+        "q975_mcse": batch_mcse(batch_quantiles[:, 2]),
+    }
+
+
 def test_public_sbm_posterior_matches_bspcov_1_0_3_golden() -> None:
     metadata = json.loads(METADATA_PATH.read_text(encoding="utf-8"))
     r_summary = _read_r_summary(dimension=5)
@@ -170,7 +207,7 @@ def test_public_sbm_posterior_matches_bspcov_1_0_3_golden() -> None:
     packed_draws = model.posterior_samples_packed_[0]
     assert packed_draws.shape == (1000, 15)
     draws = unpack_lower_triangle_column_major(packed_draws, dimension=5)
-    pybspcov_summary = summarize_draws(
+    pybspcov_summary = _summarize_draws(
         np.asarray(jax.device_get(draws)),
         truth,
     )
