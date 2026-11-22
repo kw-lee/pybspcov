@@ -21,12 +21,12 @@ package itself does not contain custom C, C++, or CUDA extensions.
 
 ## R/Python performance comparison
 
-The repository includes a reproducible, fail-closed comparison harness for R
-`bspcov` 1.0.3 and `pybspcov`. It covers BM, SBM, BandPPP, and ThresholdPPP at
-`p = 50, 100, 200`, with a Python GPU/R CPU optimized comparison and a
-single-core float64 CPU control. Timing results can be rendered here only after
-all four long-run float64 statistical-parity gates and all 60 timing cells pass.
-See the [full protocol and reproduction commands](benchmarks/r_comparison/README.md).
+`benchmarks/r_comparison/` compares R `bspcov` 1.0.3 with `pybspcov` on BM,
+SBM, BandPPP, and ThresholdPPP at `p = 50, 100, 200`. One comparison runs
+Python on the GPU against R on 8 CPU workers. The other runs both on a single
+CPU core in float64. The tables below are rendered only when all four float64
+parity gates and all 60 timing cells pass. See the
+[protocol and reproduction commands](benchmarks/r_comparison/README.md).
 
 <!-- r-python-benchmark:start -->
 ### R `bspcov` comparison
@@ -51,7 +51,7 @@ The matching single-core float64 baseline separates implementation differences f
 | BandPPP | 1.884 | 1.292 | 1.459x | 1.810x |
 | ThresholdPPP | 2.151 | 1.154 | 1.864x | 1.883x |
 
-These host- and workload-specific results were recorded at revision `56920dd04f1a56446035a3362a1f2ccc3172bfab`. They do not establish universal performance superiority.
+These host- and workload-specific results were recorded at revision `56920dd04f1a56446035a3362a1f2ccc3172bfab`.
 
 [Full protocol, environment, and limitations](https://github.com/kw-lee/pybspcov/blob/main/benchmarks/baselines/0.1.0.dev0/r-python/README.md)
 <!-- r-python-benchmark:end -->
@@ -64,8 +64,8 @@ Run the BM and SBM estimators on a small centered data matrix:
 uv run python examples/quickstart.py
 ```
 
-The example uses short float32 chains so that it serves as an installation
-smoke test, not as a scientific analysis. A complete public API call looks like:
+The example runs short float32 chains to check the installation; they are too
+short for inference. A complete public API call looks like:
 
 ```python
 import jax
@@ -127,13 +127,14 @@ trace = az.plot_trace(
 full symmetric matrix as `posterior/covariance` with `row` and `column`
 coordinates. Conversion transfers the covariance draws from their JAX device
 to host memory. ArviZ supplies effective sample size, R-hat, Monte Carlo
-standard errors, intervals, and visualization; pybspcov does not duplicate
-those diagnostics in its lightweight `summary()`.
+standard errors, intervals, and visualization; `summary()` does not compute
+them.
 
-`SBMSPCov` has the same input, dtype, device, key, and packed-sample contracts.
-With `device=None`, JAX selects its default device; `device="cpu"` and
-`device="gpu"` request those backends explicitly and fail clearly when the
-requested backend is unavailable. Fitted arrays remain on the selected device.
+`SBMSPCov` takes the same input, key, dtype, and device arguments as `BMSPCov`
+and stores draws in the same packed layout. With `device=None`, JAX selects its
+default device; `device="cpu"` and `device="gpu"` request that backend and
+raise `RuntimeError` when it is unavailable. Fitted arrays remain on the
+selected device.
 Its default `cutoff_method="fnr"` uses `fnr_correlation=0.25`,
 `false_negative_rate=0.05`, and `n_cutoff_simulations=1000`; the alternative
 `cutoff_method="correlation"` uses `retained_fraction=0.2`. Screening runs
@@ -143,10 +144,9 @@ by `bspcov` 1.0.3. In that mode, `screening_mask_` has shape `(chain, p, p)`,
 `screening_cutoff_` has shape `(chain,)`, and the screening diagnostics contain
 per-chain tuples. `screening_cutoff_` is populated only for FNR screening.
 
-The checked-in R fixtures validate screening formulas, estimator orchestration,
-and the public correlation-screened SBM posterior on the upstream `p=5`
-example. This is targeted regression evidence, not a claim of universal
-scientific equivalence or speedup.
+The checked-in R fixtures check the screening formulas and the
+correlation-screened SBM posterior on the upstream `p=5` example. They are
+regression tests on that one example.
 
 ## Development installation
 
@@ -179,14 +179,13 @@ worktree, parallel ownership, and protected-`main` rules are defined in the
 The [documentation layout](docs/README.md) keeps Sphinx sources separate from
 maintainer documents.
 
-Repository content is written in English. AI-assisted contributions will be
-treated as unreviewed suggestions and will remain subject to human review,
-independent scientific validation, provenance checks, and the contribution
-policy established during project scaffolding.
+Repository content is written in English. AI-assisted contributions are
+treated as unreviewed suggestions; [CONTRIBUTING.md](CONTRIBUTING.md) lists the
+review they must pass.
 
 ## Maintainer
 
-Kyeongwon Lee — <kwlee1718@gmail.com>
+Kyeongwon Lee (<kwlee1718@gmail.com>)
 
 ## Upstream project
 

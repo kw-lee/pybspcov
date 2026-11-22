@@ -1,13 +1,13 @@
 # R/Python comparison benchmark
 
-This directory implements the pre-registered comparison between R `bspcov`
-1.0.3 and the current `pybspcov` revision. It deliberately separates
-statistical parity from performance. A timing result is publishable only when
-all four float64 parity gates pass and all 60 timing cells are present.
+This directory compares R `bspcov` 1.0.3 with the current `pybspcov` revision.
+Statistical parity and performance are measured separately. A timing result is
+published only when all four float64 parity gates pass and all 60 timing cells
+are present.
 
 ## Protocol
 
-The immutable settings are in `manifest.json`. BM, SBM, BandPPP, and
+The settings are fixed in `manifest.json`. BM, SBM, BandPPP, and
 ThresholdPPP use identical CSV inputs generated once for each dimension. The
 timing matrix uses `p = 50, 100, 200`, `n = 3p`, and a fixed seed. It contains:
 
@@ -25,9 +25,9 @@ Each timing cell runs once in a fresh process for cold end-to-end wall time,
 then three warm fits. Two more warm fits are added only when the relative range
 of the first three exceeds 10%. BLAS libraries are limited to one thread and
 each process is pinned to the requested number of CPUs from its actual affinity
-mask. GPU requests must resolve to CUDA; silent CPU fallback is rejected.
+mask. GPU requests must resolve to CUDA; a CPU fallback is an error.
 
-The parity fixture is intentionally small and long-running. BM and SBM use four
+The parity fixture is small and its chains are long. BM and SBM use four
 chains with 2,000 burn-in and 2,000 retained draws per chain. PPP methods use
 5,000 retained draws. Posterior mean, standard deviation, 2.5%, 50%, and 97.5%
 quantiles, plus RMSE, must each agree within six combined Monte Carlo standard
@@ -122,14 +122,13 @@ baseline directory before committing a generated README result.
 
 ## Limitations
 
-The optimized headline intentionally compares each implementation's intended
-fast path and therefore includes a GPU only on the Python side. It is not a
-hardware-equal comparison; the single-core CPU float64 table provides that
-control. Results are specific to one host, fixture family, seed, and short
-performance-run chain length. They do not establish universal superiority.
+The headline compares each implementation's fastest path, so only the Python
+side uses a GPU. The single-core CPU float64 table is the hardware-equal
+comparison. Results are specific to one host, fixture family, seed, and chain
+length.
 
 The public R API does not expose a rejected-sweep counter for these calls. The
 R runner records zero only after checking that all returned draws are finite;
-this limitation must remain in the archived baseline report. No partial,
-version-mismatched, dirty-tree, parity-failing, or CPU-fallback result may be
-rendered into the project README.
+state this in the archived baseline report. Do not render a result into the
+project README if it is partial, comes from a dirty tree or another `bspcov`
+version, fails parity, or fell back to the CPU.

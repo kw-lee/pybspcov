@@ -1,6 +1,6 @@
 # Documentation Layout
 
-The `docs` tree contains two deliberately separate kinds of documentation.
+The `docs` tree contains two kinds of documentation.
 
 - `docs/source/` is the Sphinx source directory for published user and API
   documentation. Its `conf.py` and `index.md` define the public documentation
@@ -21,7 +21,7 @@ curated page under `docs/source/development/`.
 Executable examples live in the repository-level `examples/` directory. A
 later examples plan will connect them to Sphinx after the estimator API is
 stable. Small CPU examples must run in CI; GPU-only performance examples are
-kept out of the ordinary documentation build.
+kept out of the documentation build.
 
 See [Development Workflow](development/workflow.md) for branch, worktree,
 parallel-development, and integration rules.

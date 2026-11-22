@@ -11,7 +11,7 @@ All notable changes to this project will be documented in this file.
 - Add an executable BM/SBM quickstart and a wheel installation smoke check.
 - Implement the public `BandPPP` and `ThresholdPPP` estimators with the same
   pooled posterior summary methods.
-- Add the fail-closed R `bspcov` 1.0.3 comparison harness under
+- Add the R `bspcov` 1.0.3 comparison harness under
   `benchmarks/r_comparison/` and publish its results in the README.
 - Remove the superseded `r_example`, `r_scaling`, and v0.1 baseline benchmark
   runners and the internal plan and design records under `docs/superpowers/`.

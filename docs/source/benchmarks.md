@@ -11,10 +11,9 @@ long sampler run.
 
 ## Interpretation and limitations
 
-The cached baseline measures dispatch and scaling for intentionally short
-chains. It is useful for comparing these recorded configurations, but it does
-not establish convergence, scientific equivalence, or a universal CPU/GPU
-speedup. The measurement host had two Intel Xeon Gold 5220R CPUs and an NVIDIA
+The cached baseline measures dispatch and scaling for short chains. The
+chains are too short to assess convergence, and the timings apply only to the
+recorded configurations. The measurement host had two Intel Xeon Gold 5220R CPUs and an NVIDIA
 GeForce RTX 3090. CPU affinity, NUMA placement, power state, and system load
 were not isolated.
 
@@ -31,5 +30,5 @@ small documentation fragment locally:
 uv run python benchmarks/render_docs_benchmarks.py
 ```
 
-The ordinary documentation jobs use `--check`; they never regenerate or rerun
-the benchmark implicitly.
+The documentation jobs use `--check`; they never regenerate or rerun the
+benchmark.

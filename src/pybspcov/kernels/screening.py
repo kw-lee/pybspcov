@@ -261,7 +261,7 @@ def fnr_screening_mask(score_matrix: Array, cutoff: float | Array) -> Array:
     off-diagonal edge is retained for sampling, and retention requires a score
     strictly greater than ``cutoff``. The diagonal is always ``False``.
 
-    This function deliberately rejects use under :func:`jax.jit` because its
+    This function rejects use under :func:`jax.jit` because its
     value checks require concrete host inputs. Package code that has already
     validated its inputs may compile the private unchecked kernel.
 
@@ -325,7 +325,7 @@ def correlation_screening_mask(
     ``False``. The cutoff uses R's type-7 linear quantile and a strict
     comparison.
 
-    This function deliberately rejects use under :func:`jax.jit` because its
+    This function rejects use under :func:`jax.jit` because its
     value checks require concrete host inputs. Package code that has already
     validated its inputs may compile the private unchecked kernel.
     """

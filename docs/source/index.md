@@ -5,7 +5,7 @@
 
 The development package includes `BandPPP`, `ThresholdPPP`, `BMSPCov`, and `SBMSPCov`.
 
-## BandPPP contract and example
+## BandPPP
 
 `BandPPP` ports `bspcov::bandPPP`. It draws from the inverse-Wishart posterior,
 zeros covariance entries outside the requested band, and shifts each processed
@@ -47,7 +47,7 @@ diagnostics = az.summary(model.to_arviz(), var_names=["covariance"])
 full symmetric matrices. `adjusted_draws_` identifies draws that required the
 diagonal eigenvalue correction.
 
-## BMSPCov contract
+## BMSPCov
 
 `BMSPCov` expects a two-dimensional, already-centered data matrix with rows as
 observations and columns as variables. Pass one typed master key created by
@@ -96,10 +96,11 @@ result to host memory. For `BMSPCov` and `SBMSPCov`, sampler acceptance values
 include burn-in sweeps and therefore are not exported as an ArviZ
 `sample_stats` group.
 
-## SBMSPCov contract
+## SBMSPCov
 
-`SBMSPCov` follows the same centered-input, typed-key, sample-layout, dtype, and
-device contract as `BMSPCov`. `device=None` uses JAX's default device; explicit
+`SBMSPCov` takes the same centered input and typed key as `BMSPCov` and uses
+the same sample layout, dtype, and device options. `device=None` uses JAX's
+default device; explicit
 `"cpu"` or `"gpu"` requests fail when that backend is unavailable, and fitted
 arrays stay on the selected device. The default FNR screen uses correlation `0.25`,
 false-negative rate `0.05`, and `1000` cutoff simulations. Correlation screening
@@ -110,15 +111,14 @@ Screening is computed once per fit by default and the resulting
 `screening_mask_` is shared by all chains. Use `screening_scope="chain"` for
 `bspcov` 1.0.3 per-chain FNR screening. That mode publishes a `(chain, p, p)`
 mask, a `(chain,)` FNR cutoff, per-chain initial covariances, and per-chain
-screening diagnostic tuples. Correlation screening is deterministic but honors
+screening diagnostic tuples. Correlation screening is deterministic but returns
 the same output shapes when chain scope is requested. Packed and reconstructed
 posterior draws retain the same chain-first shapes as `BMSPCov`.
 
-The R-derived tests establish screening and orchestration contracts and compare
-the public correlation-screened SBM posterior with a versioned `bspcov 1.0.3`
-fixture using combined Monte Carlo uncertainty. Broader scientific parity and
-performance claims still require representative datasets, dimensions, and
-complete runtime provenance.
+The R-derived tests check the screening formulas and compare the
+correlation-screened SBM posterior with a versioned `bspcov 1.0.3` fixture
+using combined Monte Carlo uncertainty. That fixture is the upstream `p=5`
+example; larger dimensions and other datasets are not covered.
 
 ```{toctree}
 :maxdepth: 2
