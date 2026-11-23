@@ -1,121 +1,39 @@
-"""Render a compact Sphinx table from versioned benchmark JSONL records."""
+"""Render a compact Sphinx table from the tracked R/Python comparison summary."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from pathlib import Path
 
-EXPECTED_CELLS = {
-    (estimator, device, dtype)
-    for estimator in ("bm", "sbm")
-    for device in ("cpu", "gpu")
-    for dtype in ("float32", "float64")
+METHOD_LABELS = {
+    "bm": "BM",
+    "sbm": "SBM",
+    "bandppp": "BandPPP",
+    "thresholdppp": "ThresholdPPP",
 }
 
 
-def load_records(directory: Path) -> list[dict[str, object]]:
-    """Load every JSON object from the cached JSONL files in ``directory``."""
-    records: list[dict[str, object]] = []
-    for path in sorted(directory.glob("*.jsonl")):
-        for line_number, line in enumerate(
-            path.read_text(encoding="utf-8").splitlines(), start=1
-        ):
-            if not line.strip():
-                continue
-            parsed = json.loads(line)
-            if not isinstance(parsed, dict):
-                raise TypeError(f"{path}:{line_number} must contain a JSON object")
-            records.append(parsed)
-    if not records:
-        raise ValueError(f"no cached JSONL records found in {directory}")
-    return records
+def load_summary(path: Path) -> dict[str, object]:
+    """Load the aggregated comparison summary written by ``aggregate.py``."""
+    parsed = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(parsed, dict):
+        raise TypeError(f"{path} must contain a JSON object")
+    return parsed
 
 
-def render_summary(records: Sequence[Mapping[str, object]], *, baseline: str) -> str:
-    """Validate and render the complete p=200 CPU/GPU comparison."""
-    selected: dict[tuple[str, str, str], Mapping[str, object]] = {}
-    for record in records:
-        if int(record.get("dimension", -1)) != 200:
-            continue
-        cell = (
-            str(record.get("estimator")),
-            str(record.get("device")),
-            str(record.get("dtype")),
-        )
-        if cell not in EXPECTED_CELLS:
-            raise ValueError(f"unexpected p=200 benchmark cell: {cell}")
-        if cell in selected:
-            raise ValueError(f"duplicate p=200 benchmark cell: {cell}")
-        selected[cell] = record
-
-    missing = EXPECTED_CELLS - selected.keys()
-    if missing:
-        raise ValueError(f"missing p=200 benchmark cells: {sorted(missing)}")
-
-    reference = selected[("bm", "cpu", "float32")]
-    git = reference.get("git")
-    environment = reference.get("environment")
-    if not isinstance(git, Mapping) or git.get("dirty") is not False:
-        raise ValueError("cached benchmark records require a clean git revision")
-    if not isinstance(environment, Mapping):
-        raise TypeError("cached benchmark environment must be an object")
-    revision = str(git.get("revision"))
-    python_version = str(environment.get("python"))
-    jax_version = str(environment.get("jax"))
-    jaxlib_version = str(environment.get("jaxlib"))
-    workload_fields = (
-        "n_observations",
-        "density",
-        "burnin",
-        "samples",
-        "chain_count",
-        "repetitions",
-    )
-    expected_workload = tuple(reference.get(field) for field in workload_fields)
-
-    medians: dict[tuple[str, str, str], float] = {}
-    for cell, record in selected.items():
-        if record.get("schema_version") != "2.0":
-            raise ValueError("cached benchmark records must use schema 2.0")
-        record_git = record.get("git")
-        record_environment = record.get("environment")
-        if not isinstance(record_git, Mapping) or record_git.get("dirty") is not False:
-            raise ValueError("cached benchmark records require a clean git revision")
-        if record_git.get("revision") != revision:
-            raise ValueError("cached benchmark revisions do not match")
-        if not isinstance(record_environment, Mapping):
-            raise TypeError("cached benchmark environment must be an object")
-        if (
-            record_environment.get("python"),
-            record_environment.get("jax"),
-            record_environment.get("jaxlib"),
-        ) != (python_version, jax_version, jaxlib_version):
-            raise ValueError("cached benchmark runtime versions do not match")
-        if tuple(record.get(field) for field in workload_fields) != expected_workload:
-            raise ValueError("cached benchmark workloads do not match")
-        timing_summary = record.get("timing_summary")
-        if not isinstance(timing_summary, Mapping):
-            raise TypeError("cached benchmark timing_summary must be an object")
-        median = float(timing_summary.get("median", math.nan))
-        if not math.isfinite(median) or median <= 0.0:
-            raise ValueError("cached benchmark medians must be finite and positive")
-        medians[cell] = median
-
-    n_observations, density, burnin, samples, chain_count, repetitions = (
-        expected_workload
-    )
-    workload = (
-        f"Workload: p=200, n={n_observations}, density {density}, "
-        f"{burnin} burn-in sweep, {samples} retained samples, "
-        f"{chain_count} chain, and {repetitions} repetitions. "
-        f"Runtime: Python {python_version}, JAX/JAXLIB {jax_version}."
-    )
+def render_summary(summary: Mapping[str, object], *, baseline: str) -> str:
+    """Validate and render the p=200 R/Python comparison."""
+    if summary.get("schema_version") != "1.0" or summary.get("complete") is not True:
+        raise ValueError("documentation requires a complete schema 1.0 summary")
+    methods = summary.get("methods")
+    if not isinstance(methods, Mapping) or set(methods) != set(METHOD_LABELS):
+        raise ValueError("documentation requires all four methods")
+    revision = str(summary.get("revision"))
     report_url = (
         "https://github.com/kw-lee/pybspcov/blob/main/benchmarks/"
-        f"baselines/{baseline}/README.md"
+        f"baselines/{baseline}/r-python/README.md"
     )
     lines = [
         "<!-- Generated by benchmarks/render_docs_benchmarks.py; do not edit. -->",
@@ -124,29 +42,45 @@ def render_summary(records: Sequence[Mapping[str, object]], *, baseline: str) ->
         "",
         (
             f"Cached baseline `{baseline}` was measured at revision `{revision}`. "
-            "The table reports warmed median fit time in seconds; compilation "
-            "is excluded. A speedup above 1.0 means the GPU was faster."
+            "The tables report warmed median fit time in seconds; compilation "
+            "is excluded. A speedup above 1.0 means Python was faster than R."
         ),
         "",
-        "| Estimator | Dtype | CPU (s) | GPU (s) | GPU speedup |",
-        "| --- | --- | ---: | ---: | ---: |",
+        "R on 8 CPU workers against Python on the GPU with 8 vmapped chains:",
+        "",
+        (
+            "| Method | Python dtype | R CPU 8-worker (s) | Python GPU vmap-8 (s) "
+            "| p=200 speedup | p=50/100/200 geometric mean |"
+        ),
+        "| --- | --- | ---: | ---: | ---: | ---: |",
     ]
-    for estimator, label in (("bm", "BM"), ("sbm", "SBM")):
-        for dtype in ("float32", "float64"):
-            cpu = medians[(estimator, "cpu", dtype)]
-            gpu = medians[(estimator, "gpu", dtype)]
-            lines.append(
-                f"| {label} | {dtype} | {cpu:.3f} | {gpu:.3f} | {cpu / gpu:.3f}x |"
-            )
+    for method, label in METHOD_LABELS.items():
+        result = methods[method]
+        large = result["large"]
+        lines.append(
+            f"| {label} | {result['headline_dtype']} | "
+            f"{large['r_optimized_seconds']:.3f} | "
+            f"{large['python_gpu_seconds']:.3f} | "
+            f"{large['optimized_speedup']:.3f}x | "
+            f"{result['geometric_mean_speedup']:.3f}x |"
+        )
     lines.extend(
         [
             "",
-            workload,
+            "Both implementations on one CPU core in float64:",
             "",
-            f"[Full cached report and methodology]({report_url})",
-            "",
+            "| Method | R CPU (s) | Python CPU (s) | Python speedup |",
+            "| --- | ---: | ---: | ---: |",
         ]
     )
+    for method, label in METHOD_LABELS.items():
+        large = methods[method]["large"]
+        lines.append(
+            f"| {label} | {large['r_cpu_baseline_seconds']:.3f} | "
+            f"{large['python_cpu_baseline_seconds']:.3f} | "
+            f"{large['cpu_baseline_speedup']:.3f}x |"
+        )
+    lines.extend(["", f"[Full cached report and methodology]({report_url})", ""])
     return "\n".join(lines)
 
 
@@ -166,16 +100,21 @@ def sync_output(path: Path, rendered: str, *, check: bool) -> None:
 if __name__ == "__main__":
     project_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline", default="0.1.0.dev1")
-    parser.add_argument("--input-dir", type=Path)
+    parser.add_argument("--baseline", default="0.1.0.dev0")
+    parser.add_argument("--summary", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--check", action="store_true")
     arguments = parser.parse_args()
-    input_dir = arguments.input_dir or (
-        project_root / "benchmarks" / "baselines" / arguments.baseline
+    summary_path = arguments.summary or (
+        project_root
+        / "benchmarks"
+        / "baselines"
+        / arguments.baseline
+        / "r-python"
+        / "summary.json"
     )
     output = arguments.output or (
         project_root / "docs" / "source" / "_generated" / "benchmark-summary.md"
     )
-    summary = render_summary(load_records(input_dir), baseline=arguments.baseline)
-    sync_output(output, summary, check=arguments.check)
+    rendered = render_summary(load_summary(summary_path), baseline=arguments.baseline)
+    sync_output(output, rendered, check=arguments.check)

@@ -9,6 +9,7 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).parents[1]
 RENDERER_PATH = PROJECT_ROOT / "benchmarks" / "render_docs_benchmarks.py"
+METHODS = ("bm", "sbm", "bandppp", "thresholdppp")
 
 
 def _load_renderer() -> ModuleType:
@@ -22,93 +23,87 @@ def _load_renderer() -> ModuleType:
     return module
 
 
-def _record(
-    *,
-    estimator: str,
-    device: str,
-    dtype: str,
-    median: float,
-) -> dict[str, object]:
+def _method(scale: float) -> dict[str, object]:
     return {
-        "schema_version": "2.0",
-        "estimator": estimator,
-        "device": device,
-        "dtype": dtype,
-        "dimension": 200,
-        "n_observations": 600,
-        "density": 0.05,
-        "burnin": 1,
-        "samples": 2,
-        "chain_count": 1,
-        "repetitions": 3,
-        "git": {"revision": "abc123", "dirty": False},
-        "environment": {
-            "python": "3.13.6",
-            "jax": "0.11.0",
-            "jaxlib": "0.11.0",
+        "geometric_mean_speedup": 1.5 * scale,
+        "headline_dtype": "float32",
+        "large": {
+            "cold_speedup": 1.25 * scale,
+            "cpu_baseline_speedup": 3.0 * scale,
+            "optimized_speedup": 2.0 * scale,
+            "python_cpu_baseline_seconds": 2.0,
+            "python_gpu_seconds": 4.0,
+            "r_cpu_baseline_seconds": 6.0 * scale,
+            "r_optimized_seconds": 8.0 * scale,
         },
-        "timing_summary": {"median": median},
     }
 
 
-def _complete_records() -> list[dict[str, object]]:
-    return [
-        _record(estimator="bm", device="cpu", dtype="float32", median=4.0),
-        _record(estimator="bm", device="gpu", dtype="float32", median=2.0),
-        _record(estimator="bm", device="cpu", dtype="float64", median=6.0),
-        _record(estimator="bm", device="gpu", dtype="float64", median=3.0),
-        _record(estimator="sbm", device="cpu", dtype="float32", median=5.0),
-        _record(estimator="sbm", device="gpu", dtype="float32", median=4.0),
-        _record(estimator="sbm", device="cpu", dtype="float64", median=9.0),
-        _record(estimator="sbm", device="gpu", dtype="float64", median=6.0),
-    ]
+def _summary() -> dict[str, object]:
+    return {
+        "schema_version": "1.0",
+        "complete": True,
+        "dimensions": [50, 100, 200],
+        "revision": "abc123",
+        "methods": {
+            method: _method(float(index))
+            for index, method in enumerate(METHODS, start=1)
+        },
+    }
 
 
-def test_render_summary_pairs_cpu_and_gpu_and_computes_speedup() -> None:
-    """Catch selecting the wrong p=200 row or reversing CPU/GPU speedup."""
+def test_render_summary_reports_both_comparisons_for_every_method() -> None:
+    """Catch swapping the GPU and single-core columns or reversing a speedup."""
     renderer = _load_renderer()
 
-    rendered = renderer.render_summary(_complete_records(), baseline="0.1.0.dev1")
+    rendered = renderer.render_summary(_summary(), baseline="0.1.0.dev0")
 
-    assert "Cached baseline `0.1.0.dev1`" in rendered
+    assert "Cached baseline `0.1.0.dev0`" in rendered
     assert "revision `abc123`" in rendered
-    assert "| BM | float32 | 4.000 | 2.000 | 2.000x |" in rendered
-    assert "| BM | float64 | 6.000 | 3.000 | 2.000x |" in rendered
-    assert "| SBM | float32 | 5.000 | 4.000 | 1.250x |" in rendered
-    assert "| SBM | float64 | 9.000 | 6.000 | 1.500x |" in rendered
-    assert "1 burn-in sweep, 2 retained samples, 1 chain, and 3 repetitions" in rendered
-    assert "Python 3.13.6, JAX/JAXLIB 0.11.0" in rendered
+    assert "| BM | float32 | 8.000 | 4.000 | 2.000x | 1.500x |" in rendered
+    assert "| SBM | float32 | 16.000 | 4.000 | 4.000x | 3.000x |" in rendered
+    assert "| BandPPP | 18.000 | 2.000 | 9.000x |" in rendered
+    assert "| ThresholdPPP | 24.000 | 2.000 | 12.000x |" in rendered
     assert not any(line.endswith(" ") for line in rendered.splitlines())
     assert (
         "https://github.com/kw-lee/pybspcov/blob/main/benchmarks/"
-        "baselines/0.1.0.dev1/README.md"
+        "baselines/0.1.0.dev0/r-python/README.md"
     ) in rendered
 
 
-def test_render_summary_rejects_an_incomplete_p200_matrix() -> None:
-    """Catch publishing a table after one required device result disappears."""
+def test_render_summary_rejects_a_summary_missing_a_method() -> None:
+    """Catch publishing a table after one method's result disappears."""
     renderer = _load_renderer()
+    summary = _summary()
+    methods = summary["methods"]
+    assert isinstance(methods, dict)
+    del methods["thresholdppp"]
 
-    with pytest.raises(ValueError, match="missing p=200 benchmark cells"):
-        renderer.render_summary(_complete_records()[:-1], baseline="0.1.0.dev1")
+    with pytest.raises(ValueError, match="all four methods"):
+        renderer.render_summary(summary, baseline="0.1.0.dev0")
 
 
-def test_load_records_reads_jsonl_objects(tmp_path: Path) -> None:
-    """Catch silently skipping a cached JSONL record used by the table."""
+def test_render_summary_rejects_an_incomplete_summary() -> None:
+    """Catch rendering a run whose parity or timing gates did not all pass."""
     renderer = _load_renderer()
-    records = _complete_records()
-    (tmp_path / "first.jsonl").write_text(
-        "\n".join(json.dumps(record) for record in records[:4]) + "\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "second.jsonl").write_text(
-        "\n".join(json.dumps(record) for record in records[4:]) + "\n",
-        encoding="utf-8",
-    )
+    summary = _summary()
+    summary["complete"] = False
 
-    loaded = renderer.load_records(tmp_path)
+    with pytest.raises(ValueError, match="complete schema 1.0 summary"):
+        renderer.render_summary(summary, baseline="0.1.0.dev0")
 
-    assert loaded == records
+
+def test_load_summary_reads_the_tracked_json_object(tmp_path: Path) -> None:
+    """Catch reading the summary from the wrong file or as the wrong type."""
+    renderer = _load_renderer()
+    path = tmp_path / "summary.json"
+    path.write_text(json.dumps(_summary()), encoding="utf-8")
+
+    assert renderer.load_summary(path) == _summary()
+
+    path.write_text("[]", encoding="utf-8")
+    with pytest.raises(TypeError, match="JSON object"):
+        renderer.load_summary(path)
 
 
 def test_sync_output_check_rejects_stale_generated_document(tmp_path: Path) -> None:

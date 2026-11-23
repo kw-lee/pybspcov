@@ -33,25 +33,25 @@ parity gates and all 60 timing cells pass. See the
 
 All four float64 parity gates passed against `bspcov` 1.0.3. The headline compares total wall time for R CPU 8-worker execution with Python GPU vmap-8 execution on the same inputs.
 
-Measured under the current system load (load1 approximately 80-93): CPU and GPU lanes ran concurrently until both CPU lanes completed; the remaining GPU cells continued under the same external 80-worker CPU load.
+Measured on a shared host: the 60 cells ran one at a time with the GPU otherwise idle, while 15 unrelated single-threaded CPU jobs ran unpinned (load average about 24 at the start and 18 at the end).
 
 | Method | Validated Python dtype | R CPU 8-worker (s) | Python GPU vmap-8 (s) | p=200 speedup | p=50/100/200 geometric mean |
 | --- | --- | ---: | ---: | ---: | ---: |
-| BM | float32 | 322.876 | 251.827 | 1.282x | 1.014x |
-| SBM | float32 | 159.317 | 243.186 | 0.655x | 0.756x |
-| BandPPP | float32 | 3.747 | 0.102 | 36.901x | 36.407x |
-| ThresholdPPP | float32 | 5.821 | 0.071 | 81.905x | 79.326x |
+| BM | float32 | 121.154 | 84.642 | 1.431x | 0.756x |
+| SBM | float32 | 53.779 | 78.494 | 0.685x | 0.409x |
+| BandPPP | float32 | 1.876 | 0.061 | 30.739x | 39.802x |
+| ThresholdPPP | float32 | 2.061 | 0.046 | 45.288x | 50.646x |
 
 The matching single-core float64 baseline separates implementation differences from GPU and multi-chain acceleration.
 
 | Method | R CPU (s) | Python CPU (s) | Python speedup | Cold optimized speedup |
 | --- | ---: | ---: | ---: | ---: |
-| BM | 195.724 | 107.284 | 1.824x | 1.819x |
-| SBM | 58.419 | 71.983 | 0.812x | 0.954x |
-| BandPPP | 1.884 | 1.292 | 1.459x | 1.810x |
-| ThresholdPPP | 2.151 | 1.154 | 1.864x | 1.883x |
+| BM | 65.473 | 31.706 | 2.065x | 1.313x |
+| SBM | 20.861 | 18.318 | 1.139x | 0.647x |
+| BandPPP | 0.601 | 0.558 | 1.076x | 1.681x |
+| ThresholdPPP | 0.983 | 0.481 | 2.044x | 1.850x |
 
-These host- and workload-specific results were recorded at revision `56920dd04f1a56446035a3362a1f2ccc3172bfab`.
+These host- and workload-specific results were recorded at revision `0fffd987d91586035820e64743ccd6ca18ef8058`.
 
 [Full protocol, environment, and limitations](https://github.com/kw-lee/pybspcov/blob/main/benchmarks/baselines/0.1.0.dev0/r-python/README.md)
 <!-- r-python-benchmark:end -->

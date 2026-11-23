@@ -51,9 +51,12 @@ uv run python benchmarks/r_comparison/run_matrix.py \
 
 That command also converts the committed upstream R example into
 `fixtures/parity-p5`. Replace `METHOD` below with each of `bm`, `sbm`,
-`bandppp`, and `thresholdppp`:
+`bandppp`, and `thresholdppp`. The Python parity runner needs
+`JAX_ENABLE_X64=1`, the same setting the timing matrix gives every cell:
 
 ```bash
+export JAX_ENABLE_X64=1
+
 Rscript --vanilla benchmarks/r_comparison/run_bspcov_parity.R \
   --manifest benchmarks/r_comparison/manifest.json \
   --fixture-dir /tmp/pybspcov-r-comparison/fixtures/parity-p5 \
@@ -116,9 +119,11 @@ uv run python benchmarks/r_comparison/render_readme.py \
   --execution-note 'Describe load, lane concurrency, and other run conditions.'
 ```
 
-Copy the manifest, raw JSONL, parity artifacts, aggregate summary, commands,
-device and precision details, and environment information into the named
-baseline directory before committing a generated README result.
+Copy the aggregate summary, commands, device and precision details, and
+environment information into `benchmarks/baselines/BASELINE-NAME/r-python/`
+before committing a generated README result, then run
+`uv run python benchmarks/render_docs_benchmarks.py` to refresh the
+documentation table. The per-cell JSONL and parity artifacts stay local.
 
 ## Limitations
 
