@@ -2,15 +2,24 @@
 
 ## Cached p=200 result
 
-Cached baseline `0.1.0.dev1` was measured at revision `9b7a0adceb75a9d182f8156129ea9222e926f90e`. The table reports warmed median fit time in seconds; compilation is excluded. A speedup above 1.0 means the GPU was faster.
+Cached baseline `0.1.0.dev0` was measured at revision `0fffd987d91586035820e64743ccd6ca18ef8058`. The tables report warmed median fit time in seconds; compilation is excluded. A speedup above 1.0 means Python was faster than R.
 
-| Estimator | Dtype | CPU (s) | GPU (s) | GPU speedup |
-| --- | --- | ---: | ---: | ---: |
-| BM | float32 | 3.197 | 2.060 | 1.552x |
-| BM | float64 | 4.152 | 4.374 | 0.949x |
-| SBM | float32 | 1.914 | 2.025 | 0.945x |
-| SBM | float64 | 2.266 | 3.712 | 0.611x |
+R on 8 CPU workers against Python on the GPU with 8 vmapped chains:
 
-Workload: p=200, n=600, density 0.05, 1 burn-in sweep, 2 retained samples, 1 chain, and 3 repetitions. Runtime: Python 3.13.6, JAX/JAXLIB 0.11.0.
+| Method | Python dtype | R CPU 8-worker (s) | Python GPU vmap-8 (s) | p=200 speedup | p=50/100/200 geometric mean |
+| --- | --- | ---: | ---: | ---: | ---: |
+| BM | float32 | 121.154 | 84.642 | 1.431x | 0.756x |
+| SBM | float32 | 53.779 | 78.494 | 0.685x | 0.409x |
+| BandPPP | float32 | 1.876 | 0.061 | 30.739x | 39.802x |
+| ThresholdPPP | float32 | 2.061 | 0.046 | 45.288x | 50.646x |
 
-[Full cached report and methodology](https://github.com/kw-lee/pybspcov/blob/main/benchmarks/baselines/0.1.0.dev1/README.md)
+Both implementations on one CPU core in float64:
+
+| Method | R CPU (s) | Python CPU (s) | Python speedup |
+| --- | ---: | ---: | ---: |
+| BM | 65.473 | 31.706 | 2.065x |
+| SBM | 20.861 | 18.318 | 1.139x |
+| BandPPP | 0.601 | 0.558 | 1.076x |
+| ThresholdPPP | 0.983 | 0.481 | 2.044x |
+
+[Full cached report and methodology](https://github.com/kw-lee/pybspcov/blob/main/benchmarks/baselines/0.1.0.dev0/r-python/README.md)
