@@ -13,13 +13,14 @@ require R, a GPU, or a long sampler run.
 
 The first table compares each implementation's fastest path, so only the Python
 side uses a GPU. The single-core float64 table is the hardware-equal
-comparison. For BM and SBM the GPU path is slower than R at `p = 50` and
-`p = 100`, which pulls the geometric mean below 1.
+comparison. The float32 GPU path is faster than R's 8 workers in every BM and
+SBM cell except SBM at `p = 100`.
 
 The chains are too short to assess convergence, and the timings apply only to
 the recorded configurations. The measurement host had an Intel Xeon w7-3565X
-and an NVIDIA RTX PRO 5000 Blackwell. Unrelated CPU jobs from another user ran
-during the measurement, and CPU frequency scaling was not fixed.
+and an NVIDIA RTX PRO 5000 Blackwell. The host is shared: no other process
+used the GPU during the measurement, but other CPU activity was not excluded,
+and CPU frequency scaling was not fixed.
 
 The linked report contains the commands, environment, execution conditions,
 and per-dimension GPU timings.
