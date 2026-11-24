@@ -33,25 +33,25 @@ parity gates and all 60 timing cells pass. See the
 
 All four float64 parity gates passed against `bspcov` 1.0.3. The headline compares total wall time for R CPU 8-worker execution with Python GPU vmap-8 execution on the same inputs.
 
-Measured on a shared host: the 60 cells ran one at a time with the GPU otherwise idle, while 15 unrelated single-threaded CPU jobs ran unpinned (load average about 24 at the start and 18 at the end).
+Measured on a shared host: the 60 cells ran one at a time, no other process used the GPU during the run, and the load average stayed between 0.1 and 6.6.
 
 | Method | Validated Python dtype | R CPU 8-worker (s) | Python GPU vmap-8 (s) | p=200 speedup | p=50/100/200 geometric mean |
 | --- | --- | ---: | ---: | ---: | ---: |
-| BM | float32 | 121.154 | 84.642 | 1.431x | 0.756x |
-| SBM | float32 | 53.779 | 78.494 | 0.685x | 0.409x |
-| BandPPP | float32 | 1.876 | 0.061 | 30.739x | 39.802x |
-| ThresholdPPP | float32 | 2.061 | 0.046 | 45.288x | 50.646x |
+| BM | float32 | 74.655 | 26.401 | 2.828x | 1.818x |
+| SBM | float32 | 35.590 | 19.899 | 1.789x | 1.115x |
+| BandPPP | float32 | 1.308 | 0.058 | 22.654x | 29.509x |
+| ThresholdPPP | float32 | 1.272 | 0.043 | 29.738x | 34.739x |
 
 The matching single-core float64 baseline separates implementation differences from GPU and multi-chain acceleration.
 
 | Method | R CPU (s) | Python CPU (s) | Python speedup | Cold optimized speedup |
 | --- | ---: | ---: | ---: | ---: |
-| BM | 65.473 | 31.706 | 2.065x | 1.313x |
-| SBM | 20.861 | 18.318 | 1.139x | 0.647x |
-| BandPPP | 0.601 | 0.558 | 1.076x | 1.681x |
-| ThresholdPPP | 0.983 | 0.481 | 2.044x | 1.850x |
+| BM | 48.107 | 23.360 | 2.059x | 2.488x |
+| SBM | 14.472 | 11.551 | 1.253x | 1.504x |
+| BandPPP | 0.464 | 0.420 | 1.105x | 1.275x |
+| ThresholdPPP | 0.708 | 0.335 | 2.115x | 1.734x |
 
-These host- and workload-specific results were recorded at revision `0fffd987d91586035820e64743ccd6ca18ef8058`.
+These host- and workload-specific results were recorded at revision `3ffbdd59f52f70e48cf1158f82058664f1398cd8`.
 
 [Full protocol, environment, and limitations](https://github.com/kw-lee/pybspcov/blob/main/benchmarks/baselines/0.1.0.dev0/r-python/README.md)
 <!-- r-python-benchmark:end -->

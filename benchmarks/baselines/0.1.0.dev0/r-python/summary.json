@@ -7,58 +7,58 @@
   ],
   "methods": {
     "bandppp": {
-      "geometric_mean_speedup": 39.80249451160558,
+      "geometric_mean_speedup": 29.508661481376784,
       "headline_dtype": "float32",
       "large": {
-        "cold_speedup": 1.6811841020380098,
-        "cpu_baseline_speedup": 1.0764627034880596,
-        "optimized_speedup": 30.739478773574056,
-        "python_cpu_baseline_seconds": 0.5583101003430784,
-        "python_gpu_seconds": 0.06102901138365269,
-        "r_cpu_baseline_seconds": 0.601,
-        "r_optimized_seconds": 1.8760000000000012
+        "cold_speedup": 1.274621938108079,
+        "cpu_baseline_speedup": 1.1053669636290109,
+        "optimized_speedup": 22.65393828976123,
+        "python_cpu_baseline_seconds": 0.41977009922266006,
+        "python_gpu_seconds": 0.05773830506950617,
+        "r_cpu_baseline_seconds": 0.4640000000000004,
+        "r_optimized_seconds": 1.3080000000000007
       }
     },
     "bm": {
-      "geometric_mean_speedup": 0.7562312792453216,
+      "geometric_mean_speedup": 1.8179586255342741,
       "headline_dtype": "float32",
       "large": {
-        "cold_speedup": 1.3130958407876454,
-        "cpu_baseline_speedup": 2.0649840164231428,
-        "optimized_speedup": 1.431370767749438,
-        "python_cpu_baseline_seconds": 31.70629868283868,
-        "python_gpu_seconds": 84.64194094901904,
-        "r_cpu_baseline_seconds": 65.47300000000001,
-        "r_optimized_seconds": 121.154
+        "cold_speedup": 2.4883805656965947,
+        "cpu_baseline_speedup": 2.059387768201219,
+        "optimized_speedup": 2.827745478573081,
+        "python_cpu_baseline_seconds": 23.35985516803339,
+        "python_gpu_seconds": 26.40089094499126,
+        "r_cpu_baseline_seconds": 48.107,
+        "r_optimized_seconds": 74.65500000000003
       }
     },
     "sbm": {
-      "geometric_mean_speedup": 0.4088951716086938,
+      "geometric_mean_speedup": 1.1154587002655625,
       "headline_dtype": "float32",
       "large": {
-        "cold_speedup": 0.647096134859044,
-        "cpu_baseline_speedup": 1.1388527643874748,
-        "optimized_speedup": 0.6851366320725848,
-        "python_cpu_baseline_seconds": 18.31755662569776,
-        "python_gpu_seconds": 78.49383244523779,
-        "r_cpu_baseline_seconds": 20.861,
-        "r_optimized_seconds": 53.778999999999996
+        "cold_speedup": 1.5037172508729635,
+        "cpu_baseline_speedup": 1.2528327312608927,
+        "optimized_speedup": 1.7885088938322322,
+        "python_cpu_baseline_seconds": 11.551422339864075,
+        "python_gpu_seconds": 19.899258048273623,
+        "r_cpu_baseline_seconds": 14.472000000000001,
+        "r_optimized_seconds": 35.59
       }
     },
     "thresholdppp": {
-      "geometric_mean_speedup": 50.64572715813417,
+      "geometric_mean_speedup": 34.73948675202191,
       "headline_dtype": "float32",
       "large": {
-        "cold_speedup": 1.8499936629368672,
-        "cpu_baseline_speedup": 2.0439151963976294,
-        "optimized_speedup": 45.28842108065339,
-        "python_cpu_baseline_seconds": 0.4809397188946605,
-        "python_gpu_seconds": 0.04550832090899348,
-        "r_cpu_baseline_seconds": 0.9830000000000005,
-        "r_optimized_seconds": 2.061
+        "cold_speedup": 1.7338621241247505,
+        "cpu_baseline_speedup": 2.1145958465406935,
+        "optimized_speedup": 29.737783568356537,
+        "python_cpu_baseline_seconds": 0.3348157526925206,
+        "python_gpu_seconds": 0.04277386702597141,
+        "r_cpu_baseline_seconds": 0.7080000000000002,
+        "r_optimized_seconds": 1.2720000000000002
       }
     }
   },
-  "revision": "0fffd987d91586035820e64743ccd6ca18ef8058",
+  "revision": "3ffbdd59f52f70e48cf1158f82058664f1398cd8",
   "schema_version": "1.0"
 }
