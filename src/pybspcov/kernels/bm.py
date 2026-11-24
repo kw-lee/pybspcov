@@ -152,6 +152,95 @@ def _bm_column_moments(
     )
 
 
+def _bm_column_moments_from_product(
+    covariance: Array,
+    precision: Array,
+    scatter: Array,
+    product: Array,
+    column: Array,
+    other_indices: Array,
+    n_observations: Array,
+    diagonal_rate: Array,
+) -> tuple[_BMColumnMoments, Array]:
+    """Return the column moments without a matrix product.
+
+    ``product`` is ``precision @ scatter @ precision``. With ``b`` the selected
+    precision column and ``w`` its diagonal entry, ``P = precision - b b' / w``
+    has a zero row and column at ``column`` and equals the conditional
+    precision on the other indices. Because ``scatter @ b`` is
+    ``scatter @ precision`` at that column, ``P @ scatter @ P`` follows from
+    ``product`` by a rank-two correction. It is returned as the second value
+    for :func:`_update_scatter_product`.
+    """
+    full_cross = precision[:, column]
+    pivot = precision[column, column]
+    product_column = product[:, column]
+    projected = (
+        product
+        - (
+            jnp.outer(product_column, full_cross)
+            + jnp.outer(full_cross, product_column)
+        )
+        / pivot
+        + jnp.outer(full_cross, full_cross) * (product[column, column] / pivot**2)
+    )
+    precision_block = precision[jnp.ix_(other_indices, other_indices)]
+    precision_cross = precision[other_indices, column]
+    conditional_precision = (
+        precision_block - jnp.outer(precision_cross, precision_cross) / pivot
+    )
+    conditional_scatter = conditional_precision @ scatter[other_indices, column]
+    quadratic = projected[jnp.ix_(other_indices, other_indices)]
+    beta = covariance[other_indices, column]
+    gamma_chi = (
+        beta @ quadratic @ beta
+        - 2.0 * beta @ conditional_scatter
+        + scatter[column, column]
+    )
+    moments = _BMColumnMoments(
+        conditional_precision=conditional_precision,
+        conditional_scatter=conditional_scatter,
+        quadratic=quadratic,
+        gamma_lambda=1.0 - n_observations / 2.0,
+        gamma_chi=gamma_chi,
+        gamma_psi=diagonal_rate,
+    )
+    return moments, projected
+
+
+def _update_scatter_product(
+    projected: Array,
+    precision: Array,
+    updated_precision: Array,
+    scatter: Array,
+    column: Array,
+    gamma: Array,
+) -> Array:
+    """Return ``updated_precision @ scatter @ updated_precision``.
+
+    The column update changes the precision to ``P + a a' / gamma``, where
+    ``P`` is the projection described in
+    :func:`_bm_column_moments_from_product` and ``a`` is ``-gamma`` times the
+    updated precision column. ``projected`` is ``P @ scatter @ P``.
+    """
+    direction = -gamma * updated_precision[:, column]
+    scatter_direction = scatter @ direction
+    full_cross = precision[:, column]
+    projected_direction = (
+        precision @ scatter_direction
+        - full_cross * (full_cross @ scatter_direction) / precision[column, column]
+    )
+    return (
+        projected
+        + (
+            jnp.outer(projected_direction, direction)
+            + jnp.outer(direction, projected_direction)
+        )
+        / gamma
+        + jnp.outer(direction, direction) * ((direction @ scatter_direction) / gamma**2)
+    )
+
+
 def _bm_beta_parameters(
     moments: _BMColumnMoments,
     tau: Array,
@@ -258,17 +347,18 @@ def bm_sweep(
 
     def update_column(
         column: int,
-        carry: tuple[BMState, Array, Array],
-    ) -> tuple[BMState, Array, Array]:
-        current, current_key, sweep_accepted = carry
+        carry: tuple[BMState, Array, Array, Array],
+    ) -> tuple[BMState, Array, Array, Array]:
+        current, product, current_key, sweep_accepted = carry
         current_key, gamma_key, beta_key, phi_key, psi_key = jax.random.split(
             current_key, 5
         )
         indices = other_indices[column]
-        moments = _bm_column_moments(
+        moments, projected = _bm_column_moments_from_product(
             current.covariance,
             current.precision,
             scatter,
+            product,
             jnp.asarray(column),
             indices,
             n_observations,
@@ -310,6 +400,14 @@ def bm_sweep(
             gamma,
             moments.conditional_precision,
         )
+        product = _update_scatter_product(
+            projected,
+            current.precision,
+            precision,
+            scatter,
+            jnp.asarray(column),
+            gamma,
+        )
         phi_keys = jax.random.split(phi_key, active_count)
         phi_chi = jnp.maximum(jnp.square(beta) / tau1sq, 1e-6)
         phi_draws = _sample_gig_batch(
@@ -338,13 +436,16 @@ def bm_sweep(
         tau = tau.at[column, indices].set(tau_values)
         updated = BMState(covariance, precision, phi, psi, tau)
         accepted = sweep_accepted & gamma_draw.accepted & jnp.all(phi_draws.accepted)
-        return updated, current_key, accepted
+        return updated, product, current_key, accepted
 
-    updated, _, accepted = jax.lax.fori_loop(
+    # Rebuilding the product once per sweep bounds the rounding error of the
+    # per-column updates and keeps it out of the chain state.
+    initial_product = state.precision @ scatter @ state.precision
+    updated, _, _, accepted = jax.lax.fori_loop(
         0,
         dimension,
         update_column,
-        (state, key, jnp.asarray(True)),
+        (state, initial_product, key, jnp.asarray(True)),
     )
     finite = jnp.logical_and.reduce(
         jnp.stack([jnp.all(jnp.isfinite(value)) for value in updated])

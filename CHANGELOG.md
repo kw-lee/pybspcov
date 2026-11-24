@@ -18,5 +18,9 @@ All notable changes to this project will be documented in this file.
 - Run one rejection loop in the scalar GIG sampler instead of dispatching the
   two regimes with `cond`. Under `vmap` the `cond` ran the unused regime's loop
   to `max_iterations` on every draw. Same-seed draws are unchanged.
+- Carry `precision @ scatter @ precision` through the BM sweep and update it
+  with rank-two corrections, replacing the per-column matrix products behind
+  the gamma quadratic form. Same-seed BM draws change at rounding level only;
+  SBM is unchanged.
 - Document upstream provenance, protected-main development, isolated worktrees,
   AI-assisted contribution controls, and GPL-2.0-or-later licensing.
