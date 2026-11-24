@@ -68,17 +68,11 @@ def _run_scalar_rejection_loop(
     return jax.lax.while_loop(condition, draw_chunk, initial)
 
 
-def _sample_small_omega(
-    key: Array,
-    lambda_: Array,
-    shape: Array,
-    omega: Array,
-    alpha: Array,
-    max_iterations: int,
-    proposal_chunk_size: int,
-) -> GIGSample:
-    """Sample the small-omega, shape-below-one GIGrvg regime."""
-    dtype = jnp.result_type(lambda_, omega, alpha)
+_Proposal = Callable[[Array, Array], tuple[Array, Array]]
+
+
+def _small_omega_proposal(shape: Array, omega: Array, dtype: jnp.dtype) -> _Proposal:
+    """Build the small-omega, shape-below-one GIGrvg proposal."""
     mode = _standardized_mode(shape, omega)
     split = omega / (1.0 - shape)
     tail_start = jnp.maximum(split, 2.0 / omega)
@@ -98,23 +92,9 @@ def _sample_small_omega(
     k2 = jnp.power(tail_start, shape - 1.0)
     area2 = k2 * 2.0 * jnp.exp(-0.5 * omega * tail_start) / omega
     total_area = area0 + area1 + area2
-    initial = (
-        key,
-        jnp.asarray(jnp.nan, dtype=dtype),
-        jnp.asarray(False),
-        jnp.asarray(0, dtype=jnp.int32),
-    )
 
-    def condition(state: tuple[Array, Array, Array, Array]) -> Array:
-        _, _, accepted, iterations = state
-        return (~accepted) & (iterations < max_iterations)
-
-    def draw(
-        state: tuple[Array, Array, Array, Array],
-    ) -> tuple[Array, Array, Array, Array]:
-        current_key, value, accepted, iterations = state
-        current_key, region_key, accept_key = jax.random.split(current_key, 3)
-        region = total_area * jax.random.uniform(region_key, dtype=dtype)
+    def propose(region_uniform: Array, accept_uniform: Array) -> tuple[Array, Array]:
+        region = total_area * region_uniform
         first_x = split * region / area0
         middle_area = region - area0
         middle_x_log = omega * jnp.exp(jnp.exp(omega) * middle_area)
@@ -145,7 +125,7 @@ def _sample_small_omega(
                 k2 * jnp.exp(-0.5 * omega * standardized),
             ),
         )
-        uniform = jax.random.uniform(accept_key, dtype=dtype) * hat
+        uniform = accept_uniform * hat
         log_density = (shape - 1.0) * jnp.log(standardized) - 0.5 * omega * (
             standardized + 1.0 / standardized
         )
@@ -154,26 +134,13 @@ def _sample_small_omega(
             & jnp.isfinite(standardized)
             & (jnp.log(uniform) <= log_density)
         )
-        candidate = jnp.where(lambda_ < 0.0, alpha / standardized, alpha * standardized)
-        value = jnp.where(accepted, candidate, value)
-        return current_key, value, accepted, iterations + 1
+        return standardized, accepted
 
-    _, value, accepted, iterations = _run_scalar_rejection_loop(
-        condition, draw, initial, proposal_chunk_size
-    )
-    return GIGSample(value=value, accepted=accepted, iterations=iterations)
+    return propose
 
 
-def _sample_no_shift(
-    key: Array,
-    lambda_: Array,
-    shape: Array,
-    omega: Array,
-    alpha: Array,
-    max_iterations: int,
-    proposal_chunk_size: int,
-) -> GIGSample:
-    """Sample the no-shift ratio-of-uniforms GIGrvg regime."""
+def _no_shift_proposal(shape: Array, omega: Array, dtype: jnp.dtype) -> _Proposal:
+    """Build the no-shift ratio-of-uniforms GIGrvg proposal."""
     t = 0.5 * (shape - 1.0)
     s = 0.25 * omega
     mode = _standardized_mode(shape, omega)
@@ -187,26 +154,9 @@ def _sample_no_shift(
         - log_normalizer
     )
 
-    dtype = jnp.result_type(lambda_, omega, alpha)
-    initial = (
-        key,
-        jnp.asarray(jnp.nan, dtype=dtype),
-        jnp.asarray(False),
-        jnp.asarray(0, dtype=jnp.int32),
-    )
-
-    def condition(state: tuple[Array, Array, Array, Array]) -> Array:
-        _, _, accepted, iterations = state
-        return (~accepted) & (iterations < max_iterations)
-
-    def draw(
-        state: tuple[Array, Array, Array, Array],
-    ) -> tuple[Array, Array, Array, Array]:
-        current_key, value, accepted, iterations = state
-        current_key, u_key, v_key = jax.random.split(current_key, 3)
-        u = upper_u * jax.random.uniform(u_key, dtype=dtype)
-        v = jax.random.uniform(v_key, dtype=dtype)
-        v = jnp.maximum(v, jnp.asarray(1e-30, dtype=dtype))
+    def propose(u_uniform: Array, v_uniform: Array) -> tuple[Array, Array]:
+        u = upper_u * u_uniform
+        v = jnp.maximum(v_uniform, jnp.asarray(1e-30, dtype=dtype))
         standardized = u / v
         log_density = (
             t * jnp.log(standardized)
@@ -218,14 +168,9 @@ def _sample_no_shift(
             & jnp.isfinite(standardized)
             & (jnp.log(v) <= log_density)
         )
-        candidate = jnp.where(lambda_ < 0.0, alpha / standardized, alpha * standardized)
-        value = jnp.where(accepted, candidate, value)
-        return current_key, value, accepted, iterations + 1
+        return standardized, accepted
 
-    _, value, accepted, iterations = _run_scalar_rejection_loop(
-        condition, draw, initial, proposal_chunk_size
-    )
-    return GIGSample(value=value, accepted=accepted, iterations=iterations)
+    return propose
 
 
 def _empty_batch_sample(batch_size: int, dtype: jnp.dtype) -> GIGSample:
@@ -491,42 +436,52 @@ def sample_gig(
     no_shift_supported = (shape >= 1.0 - 2.25 * jnp.square(omega)) | (omega > 0.2)
 
     use_small = valid & (~no_shift_supported)
-    operands = (key, lambda_, shape, omega, alpha)
-
-    def sample_small(values: tuple[Array, Array, Array, Array, Array]) -> GIGSample:
-        branch_key, branch_lambda, branch_shape, branch_omega, branch_alpha = values
-        return _sample_small_omega(
-            branch_key,
-            branch_lambda,
-            branch_shape,
-            branch_omega,
-            branch_alpha,
-            max_iterations,
-            proposal_chunk_size,
-        )
-
-    def sample_no_shift(values: tuple[Array, Array, Array, Array, Array]) -> GIGSample:
-        branch_key, branch_lambda, branch_shape, branch_omega, branch_alpha = values
-        return _sample_no_shift(
-            branch_key,
-            branch_lambda,
-            branch_shape,
-            branch_omega,
-            branch_alpha,
-            max_iterations,
-            proposal_chunk_size,
-        )
-
-    sample = jax.lax.cond(
-        use_small,
-        sample_small,
-        sample_no_shift,
-        operands,
+    propose_small = _small_omega_proposal(shape, omega, dtype)
+    propose_no_shift = _no_shift_proposal(shape, omega, dtype)
+    initial = (
+        key,
+        jnp.asarray(jnp.nan, dtype=dtype),
+        jnp.asarray(False),
+        jnp.asarray(0, dtype=jnp.int32),
     )
-    accepted = sample.accepted & valid
+
+    def condition(state: _ScalarState) -> Array:
+        _, _, accepted, iterations = state
+        return (~accepted) & (iterations < max_iterations)
+
+    def rescale(standardized: Array) -> Array:
+        return jnp.where(lambda_ < 0.0, alpha / standardized, alpha * standardized)
+
+    def draw(state: _ScalarState) -> _ScalarState:
+        # Both regimes read the same two uniforms, so one loop serves either.
+        # A ``cond`` on the regime would become a ``select`` under ``vmap`` and
+        # run the unused regime's loop until ``max_iterations``.
+        current_key, value, accepted, iterations = state
+        current_key, first_key, second_key = jax.random.split(current_key, 3)
+        first_uniform = jax.random.uniform(first_key, dtype=dtype)
+        second_uniform = jax.random.uniform(second_key, dtype=dtype)
+        small_standardized, small_accepted = propose_small(
+            first_uniform, second_uniform
+        )
+        no_shift_standardized, no_shift_accepted = propose_no_shift(
+            first_uniform, second_uniform
+        )
+        candidate = jnp.where(
+            use_small,
+            rescale(small_standardized),
+            rescale(no_shift_standardized),
+        )
+        accepted = jnp.where(use_small, small_accepted, no_shift_accepted)
+        value = jnp.where(accepted, candidate, value)
+        return current_key, value, accepted, iterations + 1
+
+    _, sample_value, sample_accepted, iterations = _run_scalar_rejection_loop(
+        condition, draw, initial, proposal_chunk_size
+    )
+    accepted = sample_accepted & valid
     value = jnp.where(
         accepted,
-        sample.value,
+        sample_value,
         jnp.asarray(jnp.nan, dtype=dtype),
     )
-    return GIGSample(value=value, accepted=accepted, iterations=sample.iterations)
+    return GIGSample(value=value, accepted=accepted, iterations=iterations)

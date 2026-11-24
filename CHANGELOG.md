@@ -15,5 +15,8 @@ All notable changes to this project will be documented in this file.
   `benchmarks/r_comparison/` and publish its results in the README.
 - Remove the superseded `r_example`, `r_scaling`, and v0.1 baseline benchmark
   runners and the internal plan and design records under `docs/superpowers/`.
+- Run one rejection loop in the scalar GIG sampler instead of dispatching the
+  two regimes with `cond`. Under `vmap` the `cond` ran the unused regime's loop
+  to `max_iterations` on every draw. Same-seed draws are unchanged.
 - Document upstream provenance, protected-main development, isolated worktrees,
   AI-assisted contribution controls, and GPL-2.0-or-later licensing.

@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -217,28 +219,45 @@ def test_gig_batch_rejects_noninteger_proposal_chunk_size() -> None:
         )
 
 
-def test_gig_dispatches_rejection_regimes_with_cond() -> None:
-    jaxpr = jax.make_jaxpr(sample_gig)(
-        jax.random.key(3),
-        jnp.asarray(0.0),
-        jnp.asarray(0.01),
-        jnp.asarray(1.0),
-    )
+def _count_primitives(jaxpr: Any, name: str) -> int:
+    count = 0
+    for equation in jaxpr.eqns:
+        count += equation.primitive.name == name
+        for parameter in equation.params.values():
+            candidates = parameter if isinstance(parameter, tuple) else (parameter,)
+            for candidate in candidates:
+                inner = getattr(candidate, "jaxpr", candidate)
+                if hasattr(inner, "eqns"):
+                    count += _count_primitives(inner, name)
+    return count
 
-    top_level_equations = jaxpr.jaxpr.eqns
-    cond_equations = [
-        equation
-        for equation in top_level_equations
-        if equation.primitive.name == "cond"
-    ]
-    assert len(cond_equations) == 1
-    assert all(equation.primitive.name != "while" for equation in top_level_equations)
 
-    branches = cond_equations[0].params["branches"]
-    assert len(branches) == 2
-    for branch in branches:
-        branch_primitives = [equation.primitive.name for equation in branch.jaxpr.eqns]
-        assert branch_primitives.count("while") == 1
+@pytest.mark.parametrize("batched", [False, True], ids=("scalar", "vmap"))
+def test_gig_runs_one_rejection_loop_for_both_regimes(batched: bool) -> None:
+    # A batched ``cond`` lowers to ``select`` and runs both branches, so a
+    # regime dispatch by ``cond`` would run the unused regime's loop to
+    # ``max_iterations`` for every vmapped draw.
+    if batched:
+        sampler = jax.vmap(sample_gig)
+        arguments = (
+            jax.random.split(jax.random.key(3), 2),
+            jnp.asarray([-299.0, 0.0]),
+            jnp.asarray([350.0, 0.01]),
+            jnp.asarray([1.0, 1.0]),
+        )
+    else:
+        sampler = sample_gig
+        arguments = (
+            jax.random.key(3),
+            jnp.asarray(0.0),
+            jnp.asarray(0.01),
+            jnp.asarray(1.0),
+        )
+
+    jaxpr = jax.make_jaxpr(sampler)(*arguments).jaxpr
+
+    assert _count_primitives(jaxpr, "while") == 1
+    assert _count_primitives(jaxpr, "cond") == 0
 
 
 @pytest.mark.parametrize(
