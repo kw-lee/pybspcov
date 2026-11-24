@@ -169,11 +169,20 @@ def test_sample_bm_chains_matches_independent_single_chain_calls(
     assert result.accepted.shape == (3, 4)
     assert result.covariance.dtype == dtype
     assert result.phi.dtype == dtype
+    # The batched and single-chain programs round the rank-one product updates
+    # differently. In float32 that moves near-zero covariance entries, and the
+    # phi draws that depend on their squares, by more than the default bounds.
+    tolerance = {"rtol": 1e-4, "atol": 1e-5} if dtype_name == "float32" else {}
     assert jnp.allclose(
         result.covariance,
         jnp.stack([chain.covariance for chain in independent]),
+        **tolerance,
     )
-    assert jnp.allclose(result.phi, jnp.stack([chain.phi for chain in independent]))
+    assert jnp.allclose(
+        result.phi,
+        jnp.stack([chain.phi for chain in independent]),
+        **tolerance,
+    )
     assert jnp.array_equal(
         result.accepted,
         jnp.stack([chain.accepted for chain in independent]),
@@ -183,6 +192,7 @@ def test_sample_bm_chains_matches_independent_single_chain_calls(
         assert jnp.allclose(
             actual,
             jnp.stack([chain.final_state[index] for chain in independent]),
+            **tolerance,
         )
     assert not jnp.allclose(result.covariance[0], result.covariance[1])
 
